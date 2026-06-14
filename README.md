@@ -3,41 +3,27 @@
 An end-to-end data quality pipeline that uses LLMs to automatically infer data quality rules, validate data, and suggest fixes for violations.
 
 ## Architecture
+
+```
 Raw Source (CSV)
-
-↓
-
+      ↓
 Extract (Python + Pandas)
-
-↓
-
+      ↓
 AI Agent: Infers data quality rules from schema + sample data
-
 (Groq LLM — llama-3.3-70b-versatile)
-
-↓
-
+      ↓
 Transform — standard cleaning (trim, normalize casing)
-
-↓
-
+      ↓
 Validate — run AI-generated rules as actual checks
-
-↓
-
-├── Pass → Load to curated table (Neon PostgreSQL)
-
-└── Fail → AI Agent analyzes failures, suggests fixes
-
-→ Load to quarantine table
-
-↓
-
+      ↓
+      ├── Pass → Load to curated table (Neon PostgreSQL)
+      └── Fail → AI Agent analyzes failures, suggests fixes
+                  → Load to quarantine table
+      ↓
 Orchestration: Airflow DAG on Astronomer (runs daily at 6am)
-
-↓
-
+      ↓
 Output: Streamlit Data Quality Dashboard
+```
 
 ## Tech Stack
 
@@ -54,41 +40,26 @@ Output: Streamlit Data Quality Dashboard
 
 ## Project Structure
 
+```
 dq_pipeline/
-
 ├── dags/
-
 │   └── dq_pipeline_dag.py      # Airflow DAG
-
 ├── include/
-
 │   ├── src/
-
 │   │   ├── extract.py          # Extract raw data
-
 │   │   ├── ai_rules.py         # AI rule inference (Groq)
-
 │   │   ├── transform.py        # Standard cleaning
-
 │   │   ├── validate.py         # Rule engine
-
 │   │   ├── ai_fixes.py         # AI fix suggestions (Groq)
-
 │   │   └── load.py             # Load to PostgreSQL
-
 │   └── data/
-
 │       └── raw/customers.csv   # Sample raw data
-
 ├── dashboard.py                # Streamlit dashboard
-
 ├── docker-compose.yml          # Local Docker setup
-
 ├── Dockerfile                  # Astronomer runtime
-
 ├── requirements.txt            # Python dependencies
-
 └── .env                        # API keys (not committed)
+```
 
 ## Data Quality Rules (AI-Inferred)
 
@@ -127,7 +98,7 @@ Issues caught:
 ### Prerequisites
 - Docker Desktop with WSL2
 - Python 3.11+
-- Groq API key ([console.groq.com](https://console.groq.com))
+- Groq API key (https://console.groq.com)
 
 ### Steps
 
