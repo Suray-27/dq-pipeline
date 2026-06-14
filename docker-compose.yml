@@ -1,0 +1,25 @@
+services:
+  postgres:
+    image: postgres:15
+    container_name: dq_postgres
+    environment:
+      POSTGRES_USER: dquser
+      POSTGRES_PASSWORD: dqpass
+      POSTGRES_DB: dqwarehouse
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+  pipeline:
+    build: .
+    container_name: dq_pipeline
+    environment:
+      GROQ_API_KEY: ${GROQ_API_KEY}
+    depends_on:
+      - postgres
+    volumes:
+      - ./data:/app/data
+
+volumes:
+  postgres_data:
