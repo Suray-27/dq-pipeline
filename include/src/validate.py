@@ -4,7 +4,7 @@ from datetime import datetime
 
 
 def check_not_null(df, col, params):
-    mask = df[col].isna()
+    mask = df[col].isna() | (df[col].astype(str).str.strip() == "nan")
     return mask, f"{col} is null"
 
 
@@ -15,7 +15,9 @@ def check_unique(df, col, params):
 
 def check_in_range(df, col, params):
     lo, hi = params["min"], params["max"]
-    mask = df[col].notna() & ((df[col] < lo) | (df[col] > hi))
+    # Convert to numeric first — coerce strings to NaN
+    numeric_col = pd.to_numeric(df[col], errors="coerce")
+    mask = numeric_col.notna() & ((numeric_col < lo) | (numeric_col > hi))
     return mask, f"{col} outside range [{lo}, {hi}]"
 
 
