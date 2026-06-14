@@ -4,7 +4,7 @@ import sqlalchemy
 import os
 import plotly.express as px
 
-DB_URL = os.environ.get("DB_URL_VAR", "")
+DB_URL = os.environ.get("DB_URL_VAR", "postgresql://neondb_owner:npg_8om4FHVGqSLa@ep-rough-rain-ah400r1w.c-3.us-east-1.aws.neon.tech/neondb?sslmode=require")
 
 
 @st.cache_resource
@@ -29,11 +29,18 @@ st.title("🔍 AI Data Quality Pipeline")
 st.caption("Powered by Groq LLM · Airflow · Neon PostgreSQL")
 
 # ─── Load Data ─────────────────────────────────────────────────
+curated = pd.DataFrame()
+quarantine = pd.DataFrame()
+violations = pd.DataFrame()
+fixes = pd.DataFrame()
+summaries = pd.DataFrame()
+
 try:
     curated = load_table("curated_customers")
     quarantine = load_table("quarantine_customers")
     violations = load_table("dq_violations")
     fixes = load_table("dq_fix_suggestions")
+    summaries = load_table("dq_run_summaries")
 except Exception as e:
     st.error(f"Database connection error: {e}")
     st.stop()
@@ -146,3 +153,14 @@ else:
 
 st.divider()
 st.caption("Auto-refreshes every 5 minutes · Built with Streamlit + Plotly")
+
+# ─── AI Run Summary ────────────────────────────────────────────
+st.subheader("🤖 AI Pipeline Summary")
+try:
+    summaries = load_table("dq_run_summaries")
+    if not summaries.empty:
+        latest = summaries.iloc[-1]
+        st.info(latest["summary"])
+        st.caption(f"Generated at {latest['timestamp']}")
+except Exception:
+    st.warning("No summary available yet — run the pipeline first.")

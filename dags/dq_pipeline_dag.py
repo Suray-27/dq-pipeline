@@ -69,15 +69,62 @@ with DAG(
         fixes = analyze_failures(violations) if violations else []
         context["ti"].xcom_push(key="fixes", value=json.dumps(fixes))
 
+    def ai_summary_task(**context):
+        sys.path.insert(0, "/usr/local/airflow/include/src")
+        import json
+        import pandas as pd
+        from ai_summary import generate_summary
+
+        violations = json.loads(
+            context["ti"].xcom_pull(task_ids="validate", key="violations")
+        )
+        fixes = json.loads(
+            context["ti"].xcom_pull(task_ids="ai_fixes", key="fixes")
+        )
+        passed_json = context["ti"].xcom_pull(task_ids="validate", key="passed")
+        failed_json = context["ti"].xcom_pull(task_ids="validate", key="failed")
+
+        passed_count = len(pd.read_json(passed_json))
+        failed_count = len(pd.read_json(failed_json))
+
+        summary = generate_summary(passed_count, failed_count, violations, fixes)
+        context["ti"].xcom_push(key="summary", value=json.dumps(summary))
+
     def load_task(**context):
+        import sys
         sys.path.insert(0, "/usr/local/airflow/include/src")
         import pandas as pd
+        import json
+        import sqlalchemy
+        import os
         from load import load
-        passed = pd.read_json(context["ti"].xcom_pull(task_ids="validate", key="passed"))
-        failed = pd.read_json(context["ti"].xcom_pull(task_ids="validate", key="failed"))
-        violations = json.loads(context["ti"].xcom_pull(task_ids="validate", key="violations"))
-        fixes = json.loads(context["ti"].xcom_pull(task_ids="ai_fixes", key="fixes"))
+
+        passed = pd.read_json(
+            context["ti"].xcom_pull(task_ids="validate", key="passed")
+        )
+        failed = pd.read_json(
+            context["ti"].xcom_pull(task_ids="validate", key="failed")
+        )
+        violations = json.loads(
+            context["ti"].xcom_pull(task_ids="validate", key="violations")
+        )
+        fixes = json.loads(
+            context["ti"].xcom_pull(task_ids="ai_fixes", key="fixes")
+        )
+        summary = json.loads(
+            context["ti"].xcom_pull(task_ids="ai_summary", key="summary")
+        )
+
         load(passed, failed, violations, fixes)
+
+        # Save summary to database
+        DB_URL = os.environ.get("DB_URL_VAR")
+        engine = sqlalchemy.create_engine(DB_URL)
+        pd.DataFrame([summary]).to_sql(
+            "dq_run_summaries", engine,
+            if_exists="append", index=False
+        )
+        print("[Load] Saved AI summary to dq_run_summaries")
 
     t1 = PythonOperator(task_id="extract", python_callable=extract_task)
     t2 = PythonOperator(task_id="infer_rules", python_callable=infer_rules_task)
@@ -85,5 +132,6 @@ with DAG(
     t4 = PythonOperator(task_id="validate", python_callable=validate_task)
     t5 = PythonOperator(task_id="ai_fixes", python_callable=ai_fixes_task)
     t6 = PythonOperator(task_id="load", python_callable=load_task)
+    t7 = PythonOperator(task_id="ai_summary", python_callable=ai_summary_task)
 
-    t1 >> t2 >> t3 >> t4 >> t5 >> t6
+    t1 >> t2 >> t3 >> t4 >> t5 >> t7 >> t6

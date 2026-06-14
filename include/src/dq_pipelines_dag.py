@@ -1,14 +1,13 @@
 import sys
 import os
-from airflow import DAG
-from airflow.operators.python import PythonOperator
-from datetime import datetime, timedelta
 import json
-
+from airflow import DAG
+from airflow.providers.standard.operators.python import PythonOperator
+from datetime import datetime, timedelta
 
 default_args = {
     "owner": "xander",
-    "retries": 2,
+    "retries": 1,
     "retry_delay": timedelta(minutes=1),
     "email_on_failure": False,
 }
@@ -23,68 +22,109 @@ with DAG(
     tags=["data-quality", "ai"],
 ) as dag:
 
-    def extract_task():
-        import sys
+    def extract_task(**context):
         sys.path.insert(0, "/usr/local/airflow/include/src")
         from extract import extract
         df = extract("/usr/local/airflow/include/data/raw/customers.csv")
-        df.to_csv("/tmp/extracted.csv", index=False)
+        # Push to XCom as JSON string
+        context["ti"].xcom_push(key="extracted", value=df.to_json())
 
-    def infer_rules_task():
-        import sys
+    def infer_rules_task(**context):
         sys.path.insert(0, "/usr/local/airflow/include/src")
         import pandas as pd
         from ai_rules import infer_rules
-        df = pd.read_csv("/tmp/extracted.csv")
+        # Pull from XCom
+        data = context["ti"].xcom_pull(task_ids="extract", key="extracted")
+        df = pd.read_json(data)
         rules = infer_rules(df)
-        with open("/tmp/rules.json", "w") as f:
-            json.dump(rules, f)
+        context["ti"].xcom_push(key="rules", value=json.dumps(rules))
 
-    def transform_task():
-        import sys
+    def transform_task(**context):
         sys.path.insert(0, "/usr/local/airflow/include/src")
         import pandas as pd
         from transform import transform
-        df = pd.read_csv("/tmp/extracted.csv")
+        data = context["ti"].xcom_pull(task_ids="extract", key="extracted")
+        df = pd.read_json(data)
         df = transform(df)
-        df.to_csv("/tmp/transformed.csv", index=False)
+        context["ti"].xcom_push(key="transformed", value=df.to_json())
 
-    def validate_task():
-        import sys
+    def validate_task(**context):
         sys.path.insert(0, "/usr/local/airflow/include/src")
         import pandas as pd
         from validate import validate
-        df = pd.read_csv("/tmp/transformed.csv")
-        with open("/tmp/rules.json") as f:
-            rules = json.load(f)
+        data = context["ti"].xcom_pull(task_ids="transform", key="transformed")
+        rules_str = context["ti"].xcom_pull(task_ids="infer_rules", key="rules")
+        df = pd.read_json(data)
+        rules = json.loads(rules_str)
         passed, failed, violations = validate(df, rules)
-        passed.to_csv("/tmp/passed.csv", index=False)
-        failed.to_csv("/tmp/failed.csv", index=False)
-        with open("/tmp/violations.json", "w") as f:
-            json.dump(violations, f, default=str)
+        context["ti"].xcom_push(key="passed", value=passed.to_json())
+        context["ti"].xcom_push(key="failed", value=failed.to_json())
+        context["ti"].xcom_push(key="violations", value=json.dumps(violations, default=str))
 
-    def ai_fixes_task():
-        import sys
+    def ai_fixes_task(**context):
         sys.path.insert(0, "/usr/local/airflow/include/src")
         from ai_fixes import analyze_failures
-        with open("/tmp/violations.json") as f:
-            violations = json.load(f)
+        violations_str = context["ti"].xcom_pull(task_ids="validate", key="violations")
+        violations = json.loads(violations_str)
         fixes = analyze_failures(violations) if violations else []
-        with open("/tmp/fixes.json", "w") as f:
-            json.dump(fixes, f)
+        context["ti"].xcom_push(key="fixes", value=json.dumps(fixes))
 
-    def load_task():
+    def ai_summary_task(**context):
+        sys.path.insert(0, "/usr/local/airflow/include/src")
+        import json
+        import pandas as pd
+        from ai_summary import generate_summary
+
+        violations = json.loads(
+            context["ti"].xcom_pull(task_ids="validate", key="violations")
+        )
+        fixes = json.loads(
+            context["ti"].xcom_pull(task_ids="ai_fixes", key="fixes")
+        )
+        passed_json = context["ti"].xcom_pull(task_ids="validate", key="passed")
+        failed_json = context["ti"].xcom_pull(task_ids="validate", key="failed")
+
+        passed_count = len(pd.read_json(passed_json))
+        failed_count = len(pd.read_json(failed_json))
+
+        summary = generate_summary(passed_count, failed_count, violations, fixes)
+        context["ti"].xcom_push(key="summary", value=json.dumps(summary))
+
+    def load_task(**context):
         import sys
         sys.path.insert(0, "/usr/local/airflow/include/src")
         import pandas as pd
+        import json
+        import sqlalchemy
+        import os
         from load import load
-        passed = pd.read_csv("/tmp/passed.csv")
-        failed = pd.read_csv("/tmp/failed.csv")
-        with open("/tmp/violations.json") as f:
-            violations = json.load(f)
-        with open("/tmp/fixes.json") as f:
-            fixes = json.load(f)
+
+        passed = pd.read_json(
+            context["ti"].xcom_pull(task_ids="validate", key="passed")
+        )
+        failed = pd.read_json(
+            context["ti"].xcom_pull(task_ids="validate", key="failed")
+        )
+        violations = json.loads(
+            context["ti"].xcom_pull(task_ids="validate", key="violations")
+        )
+        fixes = json.loads(
+            context["ti"].xcom_pull(task_ids="ai_fixes", key="fixes")
+        )
+        summary = json.loads(
+            context["ti"].xcom_pull(task_ids="ai_summary", key="summary")
+        )
+
         load(passed, failed, violations, fixes)
+
+        # Save summary to database
+        DB_URL = os.environ.get("DB_URL_VAR")
+        engine = sqlalchemy.create_engine(DB_URL)
+        pd.DataFrame([summary]).to_sql(
+            "dq_run_summaries", engine,
+            if_exists="append", index=False
+        )
+        print("[Load] Saved AI summary to dq_run_summaries")
 
     t1 = PythonOperator(task_id="extract", python_callable=extract_task)
     t2 = PythonOperator(task_id="infer_rules", python_callable=infer_rules_task)
@@ -92,5 +132,6 @@ with DAG(
     t4 = PythonOperator(task_id="validate", python_callable=validate_task)
     t5 = PythonOperator(task_id="ai_fixes", python_callable=ai_fixes_task)
     t6 = PythonOperator(task_id="load", python_callable=load_task)
+    t7 = PythonOperator(task_id="ai_summary", python_callable=ai_summary_task)
 
-    t1 >> t2 >> t3 >> t4 >> t5 >> t6
+    t1 >> t2 >> t3 >> t4 >> t5 >> t7 >> t6
