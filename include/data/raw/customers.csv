@@ -1,9 +1,9 @@
-id,name,email,signup_dt,status,age
-1,Alice Smith,alice@example.com,2024-01-15,active,29
-2,Bob Jones,bob@example.com,2024-02-20,active,34
-3,Carol White,carol@example.com,2025-12-30,inactive,41
-4,Dave Brown,dave@example.com,2024-03-10,ACTIVE,
-5,Eve Davis,eve@invalid,2024-04-05,pending,25
+id,name,email,signup_dt,status,age,phone
+1,Alice Smith,alice@example.com,2024-01-15,active,29,B
+2,Bob Jones,bob@example.com,2024-02-20,active,34,B
+3,Carol White,carol@example.com,2025-12-30,inactive,41,B
+4,Dave Brown,dave@example.com,2024-03-10,ACTIVE,NB
+5,Eve Davis,eve@invalid,2024-04-05,pending,25,NB
 6,Frank Lee,frank@example.com,2024-05-01,active,150
 7,Grace Kim,grace@example.com,not_a_date,inactive,38
 8,Alice Smith,alice2@example.com,2024-01-15,active,29

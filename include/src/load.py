@@ -1,6 +1,7 @@
 import pandas as pd
 import os
 import json
+from datetime import datetime
 from sqlalchemy import create_engine
 
 DB_URL = os.environ.get("DB_URL_VAR", "")
@@ -33,6 +34,21 @@ def load(passed_df: pd.DataFrame, failed_df: pd.DataFrame,
 
     engine.dispose()
     print("[Load] Done — all tables written to PostgreSQL")
+
+def save_drift_report(report: dict):
+    engine = get_engine()
+    pd.DataFrame([{
+        "source_name": report["source_name"],
+        "run_id": report["run_id"],
+        "status": report["status"],
+        "changes": json.dumps(report["changes"]),
+        "ai_explanation": report["ai_explanation"],
+        "captured_at": datetime.now().isoformat(),
+    }]).to_sql(
+        "dq_drift_reports", engine,
+        if_exists="append", index=False
+    )
+    print(f"[Load] Saved drift report — status: {report['status']}")
 
 
 if __name__ == "__main__":

@@ -164,3 +164,21 @@ try:
         st.caption(f"Generated at {latest['timestamp']}")
 except Exception:
     st.warning("No summary available yet — run the pipeline first.")
+
+# ─── Schema Drift ──────────────────────────────────────────────
+st.subheader("🔄 Schema Drift Detection")
+try:
+    drift = load_table("dq_drift_reports")
+    if not drift.empty:
+        latest = drift.iloc[-1]
+        if latest["status"] == "drift_detected":
+            st.warning(f"⚠️ Schema drift detected in last run!")
+            st.write(latest["ai_explanation"])
+            with st.expander("View raw changes"):
+                st.json(latest["changes"])
+        elif latest["status"] == "no_drift":
+            st.success("✅ No schema drift detected in last run")
+        else:
+            st.info("ℹ️ First pipeline run — schema baseline established")
+except Exception:
+    st.info("No drift reports available yet")

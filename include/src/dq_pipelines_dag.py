@@ -117,6 +117,22 @@ with DAG(
 
         load(passed, failed, violations, fixes)
 
+    def drift_detection_task(**context):
+        import sys
+        sys.path.insert(0, "/usr/local/airflow/include/src")
+        import json
+        import pandas as pd
+        from datetime import datetime
+        from ai_drift import detect_drift
+
+        data = context["ti"].xcom_pull(task_ids="extract", key="extracted")
+        df = pd.read_json(data)
+        run_id = datetime.now().strftime("%Y%m%d%H%M%S")
+
+        report = detect_drift(df, source_name="customers", run_id=run_id)
+        context["ti"].xcom_push(key="drift_report", value=json.dumps(report))
+        context["ti"].xcom_push(key="run_id", value=run_id)
+
         # Save summary to database
         DB_URL = os.environ.get("DB_URL_VAR")
         engine = sqlalchemy.create_engine(DB_URL)
@@ -133,5 +149,6 @@ with DAG(
     t5 = PythonOperator(task_id="ai_fixes", python_callable=ai_fixes_task)
     t6 = PythonOperator(task_id="load", python_callable=load_task)
     t7 = PythonOperator(task_id="ai_summary", python_callable=ai_summary_task)
+    t8 = PythonOperator(task_id="drift_detection", python_callable=drift_detection_task)
 
-    t1 >> t2 >> t3 >> t4 >> t5 >> t7 >> t6
+    t1 >> [t2,t8] >> t3 >> t4 >> t5 >> t7 >> t6
