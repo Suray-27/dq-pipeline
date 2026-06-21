@@ -77,7 +77,7 @@ with col_left:
         color_discrete_map={"Curated": "#00cc96", "Quarantined": "#ef553b"},
         title="Row Distribution"
     )
-    st.plotly_chart(fig_pie, use_container_width=True)
+    st.plotly_chart(fig_pie, width="stretch")
 
 with col_right:
     if not violations.empty:
@@ -92,7 +92,7 @@ with col_right:
             title="Violations by Column & Rule Type",
             labels={"column": "Column", "count": "Violations"}
         )
-        st.plotly_chart(fig_bar, use_container_width=True)
+        st.plotly_chart(fig_bar, width="stretch")
 
 st.divider()
 
@@ -100,7 +100,7 @@ st.divider()
 st.subheader("✅ Curated Data")
 st.dataframe(
     curated,
-    use_container_width=True,
+    width="stretch",
     hide_index=True
 )
 
@@ -110,7 +110,7 @@ st.divider()
 st.subheader("🚫 Quarantined Data")
 st.dataframe(
     quarantine,
-    use_container_width=True,
+    width="stretch",
     hide_index=True
 )
 
@@ -127,7 +127,7 @@ if not violations.empty:
         )
     filtered = violations if selected_col == "All" else \
         violations[violations["column"] == selected_col]
-    st.dataframe(filtered, use_container_width=True, hide_index=True)
+    st.dataframe(filtered, width="stretch", hide_index=True)
 
 st.divider()
 
@@ -182,3 +182,107 @@ try:
             st.info("ℹ️ First pipeline run — schema baseline established")
 except Exception:
     st.info("No drift reports available yet")
+
+# ─── Conversational Assistant ──────────────────────────────────
+st.divider()
+st.subheader("💬 Ask the Data Assistant")
+st.caption("Ask anything about this pipeline run")
+
+# Initialize chat history in session state
+if "messages" not in st.session_state:
+    st.session_state.messages = []
+
+if "data_context" not in st.session_state:
+    st.session_state.data_context = f"""
+You are a data quality assistant. Answer questions about the pipeline run below.
+Be concise, friendly, and non-technical. Always count carefully before 
+stating numbers. Double-check your figures before responding.
+Be concise, friendly, and non-technical. Use plain English.
+
+PIPELINE DATA:
+- Total records processed: {len(curated) + len(quarantine)}
+- Curated (passed): {len(curated)} rows
+- Quarantined (failed): {len(quarantine)} rows
+- Pass rate: {pass_rate}%
+- Violations found: {len(violations)}
+
+CURATED RECORDS:
+{curated.to_string() if not curated.empty else "None"}
+
+QUARANTINED RECORDS:
+{quarantine.to_string() if not quarantine.empty else "None"}
+
+VIOLATIONS:
+{violations.to_string() if not violations.empty else "None"}
+
+FIX SUGGESTIONS:
+{fixes.to_string() if not fixes.empty else "None"}
+
+LATEST AI SUMMARY:
+{summaries.iloc[-1]["summary"] if not summaries.empty else "Not available"}
+"""
+
+# Display chat history
+for msg in st.session_state.messages:
+    with st.chat_message(msg["role"]):
+        st.write(msg["content"])
+
+# Chat input
+if prompt := st.chat_input("Ask about the pipeline data..."):
+    # Add user message to history
+    st.session_state.messages.append({
+        "role": "user",
+        "content": prompt
+    })
+
+    with st.chat_message("user"):
+        st.write(prompt)
+
+    # Build messages for Groq
+    groq_messages = [
+        {
+            "role": "system",
+            "content": st.session_state.data_context
+        }
+    ]
+
+    # Add conversation history
+    for msg in st.session_state.messages:
+        groq_messages.append({
+            "role": msg["role"],
+            "content": msg["content"]
+        })
+
+    # Call Groq
+    import requests
+    import os
+
+    response = requests.post(
+        "https://api.groq.com/openai/v1/chat/completions",
+        headers={
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {os.environ.get('GROQ_API_KEY')}",
+        },
+        json={
+            "model": "llama-3.3-70b-versatile",
+            "max_tokens": 500,
+            "messages": groq_messages,
+        }
+    )
+
+    reply = response.json()["choices"][0]["message"]["content"]
+
+    # Add assistant reply to history
+    st.session_state.messages.append({
+        "role": "assistant",
+        "content": reply
+    })
+
+    with st.chat_message("assistant"):
+        st.write(reply)
+
+# Clear chat button
+if st.session_state.messages:
+    if st.button("🗑️ Clear Chat"):
+        st.session_state.messages = []
+        st.rerun()
