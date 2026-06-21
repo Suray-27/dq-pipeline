@@ -18,6 +18,15 @@
     "reasoning": "Store opened on 2025-12-24, no transactions possible before this date"
   },
   {
+    "column": "time_of_transaction",
+    "rule_type": "max_date",
+    "params": {
+      "format": "%Y-%m-%d %H:%M:%S",
+      "max": "today"
+    },
+    "reasoning": "Transaction date cannot be in the future"
+  },
+  {
     "column": "trans_amt",
     "rule_type": "in_range",
     "params": {
@@ -34,21 +43,15 @@
   },
   {
     "column": "trans_id",
-    "rule_type": "not_null",
-    "params": {},
-    "reasoning": "Transaction ID is necessary for tracking"
-  },
-  {
-    "column": "trans_id",
     "rule_type": "unique",
     "params": {},
-    "reasoning": "Transaction ID should be unique to identify each transaction"
+    "reasoning": "Each transaction should have a unique identifier"
   },
   {
     "column": "prod_id",
     "rule_type": "not_null",
     "params": {},
-    "reasoning": "Product ID is necessary for inventory and sales tracking"
+    "reasoning": "A product ID is necessary for each transaction"
   },
   {
     "column": "status",
@@ -61,22 +64,5 @@
       ]
     },
     "reasoning": "Only specific statuses are valid for a transaction"
-  },
-  {
-    "column": "status",
-    "rule_type": "regex",
-    "params": {
-      "pattern": "^(completed|pending|refunded)$"
-    },
-    "reasoning": "Status should be case-sensitive and only match the exact allowed values."
-  },
-  {
-    "column": "time_of_transaction",
-    "rule_type": "max_date",
-    "params": {
-      "format": "%Y-%m-%d %H:%M:%S",
-      "max": "today"
-    },
-    "reasoning": "Transaction date cannot be in the future"
   }
 ]

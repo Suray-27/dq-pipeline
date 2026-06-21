@@ -3,19 +3,19 @@
     "column": "id",
     "rule_type": "unique",
     "params": {},
-    "reasoning": "Each customer should have a unique identifier"
+    "reasoning": "Customer IDs should be unique to identify each customer"
   },
   {
     "column": "name",
     "rule_type": "not_null",
     "params": {},
-    "reasoning": "Customer name is required for identification purposes"
+    "reasoning": "Customer names are essential for identification"
   },
   {
     "column": "email",
     "rule_type": "not_null",
     "params": {},
-    "reasoning": "Email is required for communication with the customer"
+    "reasoning": "Email addresses are necessary for communication"
   },
   {
     "column": "email",
@@ -23,13 +23,7 @@
     "params": {
       "pattern": "^[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\\.[a-zA-Z0-9-.]+$"
     },
-    "reasoning": "Email should be in a valid format"
-  },
-  {
-    "column": "signup_dt",
-    "rule_type": "not_null",
-    "params": {},
-    "reasoning": "Signup date is required for tracking customer activity"
+    "reasoning": "Email addresses should follow a standard format"
   },
   {
     "column": "signup_dt",
@@ -37,41 +31,30 @@
     "params": {
       "format": "%Y-%m-%d"
     },
-    "reasoning": "Signup date should be in a valid format"
+    "reasoning": "Signup dates should be in a standard date format"
   },
   {
-    "column": "status",
-    "rule_type": "allowed_values",
+    "column": "signup_dt",
+    "rule_type": "max_date",
     "params": {
-      "values": [
-        "active",
-        "inactive",
-        "pending"
-      ]
+      "format": "%Y-%m-%d",
+      "max": "today"
     },
-    "reasoning": "Status should be one of the allowed values"
+    "reasoning": "Signup dates should not be in the future"
   },
   {
     "column": "age",
     "rule_type": "in_range",
     "params": {
       "min": 0,
-      "max": 120
+      "max": 150
     },
-    "reasoning": "Age should be within a valid range"
+    "reasoning": "Ages should be within a reasonable range"
   },
   {
     "column": "age",
     "rule_type": "not_null",
     "params": {},
-    "reasoning": "Age is required for demographic analysis"
-  },
-  {
-    "column": "phone",
-    "rule_type": "regex",
-    "params": {
-      "pattern": "^(?:\\+?1\\s?)?(?:\\(\\d{3}\\)|\\d{3})\\s?\\d{3}\\s?\\d{4}$"
-    },
-    "reasoning": "Phone number should be in a valid format if provided"
+    "reasoning": "Ages are important demographic information"
   }
 ]

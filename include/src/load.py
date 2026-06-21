@@ -1,39 +1,36 @@
-import pandas as pd
 import os
 import json
+import pandas as pd
+import sqlalchemy
 from datetime import datetime
-from sqlalchemy import create_engine
 
-DB_URL = os.environ.get("DB_URL_VAR", "")
 
 def get_engine():
-    return create_engine(DB_URL)
+    # Read DB_URL inside function, not at module level
+    DB_URL = os.environ.get("DB_URL_VAR")
+    if not DB_URL:
+        raise ValueError("DB_URL environment variable is not set!")
+    return sqlalchemy.create_engine(DB_URL)
 
 
-def load(passed_df: pd.DataFrame, failed_df: pd.DataFrame,
-         violations: list, fixes: list):
-
+def load(passed_df, failed_df, violations, fixes):
     engine = get_engine()
 
-    passed_df.to_sql("curated_customers", engine,
-                     if_exists="replace", index=False)
+    passed_df.to_sql("curated_customers", engine, if_exists="replace", index=False)
     print(f"[Load] curated_customers: {len(passed_df)} rows")
 
-    failed_df.to_sql("quarantine_customers", engine,
-                     if_exists="replace", index=False)
+    failed_df.to_sql("quarantine_customers", engine, if_exists="replace", index=False)
     print(f"[Load] quarantine_customers: {len(failed_df)} rows")
 
-    pd.DataFrame(violations).to_sql("dq_violations", engine,
-                                    if_exists="replace", index=False)
+    pd.DataFrame(violations).to_sql("dq_violations", engine, if_exists="replace", index=False)
     print(f"[Load] dq_violations: {len(violations)} rows")
 
     if fixes:
-        pd.DataFrame(fixes).to_sql("dq_fix_suggestions", engine,
-                                   if_exists="replace", index=False)
+        pd.DataFrame(fixes).to_sql("dq_fix_suggestions", engine, if_exists="replace", index=False)
         print(f"[Load] dq_fix_suggestions: {len(fixes)} rows")
 
     engine.dispose()
-    print("[Load] Done — all tables written to PostgreSQL")
+    print("[Load] Done")
 
 def save_drift_report(report: dict):
     engine = get_engine()

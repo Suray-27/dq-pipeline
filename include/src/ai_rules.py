@@ -1,5 +1,6 @@
 import json
 import os
+import hashlib
 import requests
 import pandas as pd
 
@@ -58,6 +59,31 @@ Respond with ONLY the JSON array, no other text, no markdown fences.
 """
 
 
+def get_schema_hash(df: pd.DataFrame) -> str:
+    """Generate a hash of the schema — columns + dtypes."""
+    schema = df.dtypes.astype(str).to_dict()
+    schema_str = json.dumps(schema, sort_keys=True)
+    return hashlib.md5(schema_str.encode()).hexdigest()
+
+
+def get_cached_hash(source_name: str) -> str:
+    """Load previously saved schema hash."""
+    hash_path = f"include/data/.schema_hash_{source_name}.txt"
+    try:
+        with open(hash_path) as f:
+            return f.read().strip()
+    except FileNotFoundError:
+        return ""
+
+
+def save_schema_hash(source_name: str, schema_hash: str):
+    """Save current schema hash for next run comparison."""
+    hash_path = f"include/data/.schema_hash_{source_name}.txt"
+    with open(hash_path, "w") as f:
+        f.write(schema_hash)
+    print(f"[AI Rules] Schema hash saved for '{source_name}'")
+
+
 def load_business_rules(source_name: str, config_path: str = "include/data/business_rules.json") -> list:
     """Load predefined business rules for a specific table."""
     try:
@@ -71,10 +97,36 @@ def load_business_rules(source_name: str, config_path: str = "include/data/busin
         return []
 
 
-def infer_rules(df: pd.DataFrame, source_name: str = "unknown") -> list:
-    """Infer rules using Groq + merge with business config rules."""
+def load_cached_rules(source_name: str) -> list:
+    """Load previously saved rules from JSON file."""
+    rules_path = f"include/data/rules_{source_name}.json"
+    try:
+        with open(rules_path) as f:
+            rules = json.load(f)
+        print(f"[AI Rules] Loaded {len(rules)} cached rules for '{source_name}'")
+        return rules
+    except FileNotFoundError:
+        return []
 
-    # Load business rules first
+
+def infer_rules(df: pd.DataFrame, source_name: str = "unknown") -> list:
+    """
+    Infer rules using Groq + merge with business config rules.
+    Skips Groq call if schema hasn't changed since last run.
+    """
+    current_hash = get_schema_hash(df)
+    cached_hash = get_cached_hash(source_name)
+
+    # Check if schema changed
+    if current_hash == cached_hash:
+        cached_rules = load_cached_rules(source_name)
+        if cached_rules:
+            print(f"[AI Rules] Schema unchanged for '{source_name}' — skipping Groq, using cached rules")
+            return cached_rules
+
+    print(f"[AI Rules] Schema changed or first run for '{source_name}' — calling Groq...")
+
+    # Load business rules
     business_rules = load_business_rules(source_name)
     existing_rule_columns = list({r["column"] for r in business_rules})
 
@@ -97,9 +149,7 @@ def infer_rules(df: pd.DataFrame, source_name: str = "unknown") -> list:
         existing_rule_columns=json.dumps(existing_rule_columns),
     )
 
-    print(f"[AI Rules] Inferring rules for '{source_name}'...")
     raw = _call_groq(prompt).strip()
-
     if raw.startswith("```"):
         raw = raw.split("```")[1]
         if raw.startswith("json"):
@@ -108,49 +158,16 @@ def infer_rules(df: pd.DataFrame, source_name: str = "unknown") -> list:
     ai_rules = json.loads(raw)
     print(f"[AI Rules] Groq inferred {len(ai_rules)} rules")
 
-    # Merge: business rules take priority, AI fills the gaps
-    merged = business_rules + ai_rules
+    # Merge business rules + AI rules
+    existing_cols_rules = {(r["column"], r["rule_type"]) for r in business_rules}
+    new_rules = [r for r in ai_rules if (r["column"], r["rule_type"]) not in existing_cols_rules]
+    merged = business_rules + new_rules
     print(f"[AI Rules] Total merged rules: {len(merged)}")
 
+    # Save rules and schema hash for next run
+    rules_path = f"include/data/rules_{source_name}.json"
+    with open(rules_path, "w") as f:
+        json.dump(merged, f, indent=2)
+    save_schema_hash(source_name, current_hash)
+
     return merged
-
-
-if __name__ == "__main__":
-    import sys
-    sys.path.insert(0, "include/src")
-    from dotenv import load_dotenv
-    load_dotenv()
-    from extract import extract
-
-    # Customers
-    df_customers = extract("include/data/raw/customers.csv")
-    rules_customers = infer_rules(df_customers, source_name="customers")
-    with open("include/data/rules_customers.json", "w") as f:
-        json.dump(rules_customers, f, indent=2)
-    print(f"Customers: {len(rules_customers)} rules saved")
-
-    # Transactions — merge with existing if present
-    df_transactions = extract("include/data/raw/transactions.csv")
-    rules_transactions = infer_rules(df_transactions, source_name="transactions")
-
-    # Check if manual rules already exist
-    existing_path = "include/data/rules_transactions.json"
-    try:
-        with open(existing_path) as f:
-            existing = json.load(f)
-        # Keep manual rules, add AI rules that don't overlap
-        existing_cols_rules = {
-            (r["column"], r["rule_type"]) for r in existing
-        }
-        new_rules = [
-            r for r in rules_transactions
-            if (r["column"], r["rule_type"]) not in existing_cols_rules
-        ]
-        final_rules = existing + new_rules
-        print(f"Merged: {len(existing)} existing + {len(new_rules)} new = {len(final_rules)} total")
-    except FileNotFoundError:
-        final_rules = rules_transactions
-
-    with open(existing_path, "w") as f:
-        json.dump(final_rules, f, indent=2)
-    print(f"Transactions: {len(final_rules)} rules saved")
