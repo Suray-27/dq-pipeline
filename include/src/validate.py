@@ -1,7 +1,15 @@
 import pandas as pd
 import json
 from datetime import datetime
+import os
+import sqlalchemy
 
+def get_engine():
+    DB_URL = os.environ.get(
+        "DB_URL_VAR",""
+        #"postgresql://dquser:dqpass@postgres:5432/dqwarehouse"
+    )
+    return sqlalchemy.create_engine(DB_URL)
 
 def check_not_null(df, col, params):
     mask = df[col].isna() | (df[col].astype(str).str.strip() == "nan")
@@ -65,14 +73,70 @@ def check_allowed_values(df, col, params):
     mask = df[col].notna() & ~df[col].isin(allowed)
     return mask, f"{col} not in allowed values {sorted(allowed)}"
 
+def check_referential_integrity(df, col, params):
+    ref_table = params["reference_table"]
+    ref_col = params["reference_column"]
+    try:
+        engine = get_engine()
+        ref_df = pd.read_sql(f"SELECT {ref_col} FROM {ref_table}", engine)
+        valid_ids = set(ref_df[ref_col].dropna().unique())
+        mask = df[col].notna() & ~df[col].isin(valid_ids)
+    except Exception as e:
+        print(f"[Validate] Referential check failed: {e}")
+        mask = pd.Series(False, index=df.index)
+    return mask, f"{col} references non-existent record in {ref_table}"
+
+
+def check_min_date(df, col, params):
+    min_val = datetime.strptime(params["min"], "%Y-%m-%d")
+
+    def is_too_old(v):
+        if pd.isna(v):
+            return False
+        try:
+            d = datetime.strptime(str(v)[:10], "%Y-%m-%d")
+            return d < min_val
+        except ValueError:
+            return False
+
+    mask = df[col].apply(is_too_old)
+    return mask, f"{col} is before minimum date {params['min']}"
+
+def check_max_date(df, col, params):
+    fmt = params.get("format", "%Y-%m-%d")
+    max_val = datetime.today() if params.get("max") == "today" else \
+        datetime.strptime(params["max"], "%Y-%m-%d")
+
+    def is_future(v):
+        if pd.isna(v):
+            return False
+        try:
+            d = datetime.strptime(str(v)[:10], "%Y-%m-%d")
+            return d > max_val
+        except ValueError:
+            return False
+
+    mask = df[col].apply(is_future)
+    return mask, f"{col} is a future date"
+
+def check_refund_amount(df, col, params):
+    """Refunded transactions should not have positive amounts."""
+    if "status" not in df.columns:
+        return pd.Series(False, index=df.index), ""
+    mask = (df["status"] == "refunded") & (df[col] > 0)
+    return mask, f"refunded transaction has positive {col}"
+
 RULE_DISPATCH = {
     "not_null": check_not_null,
     "unique": check_unique,
     "in_range": check_in_range,
     "valid_date": check_valid_date,
     "max_date": check_max_date,
+    "min_date": check_min_date,
     "regex": check_regex,
     "allowed_values": check_allowed_values,
+    "refund_check": check_refund_amount,
+    "referential_integrity": check_referential_integrity,
 }
 
 

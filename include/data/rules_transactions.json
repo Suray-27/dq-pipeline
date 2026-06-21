@@ -1,0 +1,82 @@
+[
+  {
+    "column": "cust_id",
+    "rule_type": "referential_integrity",
+    "params": {
+      "reference_table": "curated_customers",
+      "reference_column": "id"
+    },
+    "reasoning": "cust_id must reference a valid customer id"
+  },
+  {
+    "column": "time_of_transaction",
+    "rule_type": "min_date",
+    "params": {
+      "format": "%Y-%m-%d %H:%M:%S",
+      "min": "2025-12-24"
+    },
+    "reasoning": "Store opened on 2025-12-24, no transactions possible before this date"
+  },
+  {
+    "column": "trans_amt",
+    "rule_type": "in_range",
+    "params": {
+      "min": 0.01,
+      "max": 50000
+    },
+    "reasoning": "Transaction amount must be positive and below fraud threshold"
+  },
+  {
+    "column": "trans_amt",
+    "rule_type": "refund_check",
+    "params": {},
+    "reasoning": "Refunded transactions should not have positive amounts"
+  },
+  {
+    "column": "trans_id",
+    "rule_type": "not_null",
+    "params": {},
+    "reasoning": "Transaction ID is necessary for tracking"
+  },
+  {
+    "column": "trans_id",
+    "rule_type": "unique",
+    "params": {},
+    "reasoning": "Transaction ID should be unique to identify each transaction"
+  },
+  {
+    "column": "prod_id",
+    "rule_type": "not_null",
+    "params": {},
+    "reasoning": "Product ID is necessary for inventory and sales tracking"
+  },
+  {
+    "column": "status",
+    "rule_type": "allowed_values",
+    "params": {
+      "values": [
+        "completed",
+        "pending",
+        "refunded"
+      ]
+    },
+    "reasoning": "Only specific statuses are valid for a transaction"
+  },
+  {
+    "column": "status",
+    "rule_type": "regex",
+    "params": {
+      "pattern": "^(completed|pending|refunded)$"
+    },
+    "reasoning": "Status should be case-sensitive and only match the exact allowed values."
+  },
+  {
+    "column": "time_of_transaction",
+    "rule_type": "max_date",
+    "params": {
+      "format": "%Y-%m-%d %H:%M:%S",
+      "max": "today"
+    },
+    "reasoning": "Transaction date cannot be in the future"
+  }
+]

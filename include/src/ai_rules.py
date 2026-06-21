@@ -42,54 +42,115 @@ Rule type param formats:
 - regex: {{"pattern": "..."}}
 - allowed_values: {{"values": [...]}}
 
+Table: {source_name}
+Description: {description}
+
 Schema:
 {schema}
 
 Sample rows (JSON):
 {sample}
 
+Note: Do NOT infer rules for columns that already have business rules defined:
+{existing_rule_columns}
+
 Respond with ONLY the JSON array, no other text, no markdown fences.
 """
 
 
-def infer_rules(df: pd.DataFrame) -> list:
+def load_business_rules(source_name: str, config_path: str = "include/data/business_rules.json") -> list:
+    """Load predefined business rules for a specific table."""
+    try:
+        with open(config_path) as f:
+            config = json.load(f)
+        rules = config.get(source_name, {}).get("rules", [])
+        print(f"[AI Rules] Loaded {len(rules)} business rules for '{source_name}'")
+        return rules
+    except FileNotFoundError:
+        print(f"[AI Rules] No business rules config found at {config_path}")
+        return []
+
+
+def infer_rules(df: pd.DataFrame, source_name: str = "unknown") -> list:
+    """Infer rules using Groq + merge with business config rules."""
+
+    # Load business rules first
+    business_rules = load_business_rules(source_name)
+    existing_rule_columns = list({r["column"] for r in business_rules})
+
+    # Load description from config
+    try:
+        with open("include/data/business_rules.json") as f:
+            config = json.load(f)
+        description = config.get(source_name, {}).get("description", "")
+    except Exception:
+        description = ""
+
     schema = df.dtypes.astype(str).to_dict()
     sample = df.head(10).to_dict(orient="records")
 
     prompt = PROMPT_TEMPLATE.format(
+        source_name=source_name,
+        description=description,
         schema=json.dumps(schema, indent=2),
         sample=json.dumps(sample, indent=2, default=str),
+        existing_rule_columns=json.dumps(existing_rule_columns),
     )
 
-    print("[AI Rules] Sending schema + sample to Groq...")
+    print(f"[AI Rules] Inferring rules for '{source_name}'...")
     raw = _call_groq(prompt).strip()
 
-    # strip markdown fences if model adds them anyway
     if raw.startswith("```"):
         raw = raw.split("```")[1]
         if raw.startswith("json"):
             raw = raw[4:]
 
-    rules = json.loads(raw)
-    print(f"[AI Rules] Received {len(rules)} rules")
-    return rules
+    ai_rules = json.loads(raw)
+    print(f"[AI Rules] Groq inferred {len(ai_rules)} rules")
+
+    # Merge: business rules take priority, AI fills the gaps
+    merged = business_rules + ai_rules
+    print(f"[AI Rules] Total merged rules: {len(merged)}")
+
+    return merged
 
 
 if __name__ == "__main__":
     import sys
     sys.path.insert(0, "include/src")
+    from dotenv import load_dotenv
+    load_dotenv()
     from extract import extract
 
-    df = extract("data/raw/customers.csv")
-    rules = infer_rules(df)
+    # Customers
+    df_customers = extract("include/data/raw/customers.csv")
+    rules_customers = infer_rules(df_customers, source_name="customers")
+    with open("include/data/rules_customers.json", "w") as f:
+        json.dump(rules_customers, f, indent=2)
+    print(f"Customers: {len(rules_customers)} rules saved")
 
-    print("\n--- Rules Inferred ---")
-    for r in rules:
-        print(f"\n  Column : {r['column']}")
-        print(f"  Rule   : {r['rule_type']} {r['params']}")
-        print(f"  Reason : {r['reasoning']}")
+    # Transactions — merge with existing if present
+    df_transactions = extract("include/data/raw/transactions.csv")
+    rules_transactions = infer_rules(df_transactions, source_name="transactions")
 
-    os.makedirs("data", exist_ok=True)
-    with open("data/rules.json", "w") as f:
-        json.dump(rules, f, indent=2)
-    print("\n[AI Rules] Saved to data/rules.json")
+    # Check if manual rules already exist
+    existing_path = "include/data/rules_transactions.json"
+    try:
+        with open(existing_path) as f:
+            existing = json.load(f)
+        # Keep manual rules, add AI rules that don't overlap
+        existing_cols_rules = {
+            (r["column"], r["rule_type"]) for r in existing
+        }
+        new_rules = [
+            r for r in rules_transactions
+            if (r["column"], r["rule_type"]) not in existing_cols_rules
+        ]
+        final_rules = existing + new_rules
+        print(f"Merged: {len(existing)} existing + {len(new_rules)} new = {len(final_rules)} total")
+    except FileNotFoundError:
+        final_rules = rules_transactions
+
+    with open(existing_path, "w") as f:
+        json.dump(final_rules, f, indent=2)
+    print(f"Transactions: {len(final_rules)} rules saved")

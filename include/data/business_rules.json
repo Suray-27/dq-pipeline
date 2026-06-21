@@ -1,0 +1,54 @@
+{
+  "customers": {
+    "description": "Customer master data",
+    "source_file": "include/data/raw/customers.csv",
+    "rules": []
+  },
+  "transactions": {
+    "description": "Sales transactions",
+    "source_file": "include/data/raw/transactions.csv",
+    "rules": [
+      {
+        "column": "cust_id",
+        "rule_type": "referential_integrity",
+        "params": {
+        "reference_table": "curated_customers",
+        "reference_column": "id"},
+  "reasoning": "cust_id must reference a valid customer id"
+      },
+      {
+        "column": "time_of_transaction",
+        "rule_type": "min_date",
+        "params": {
+          "format": "%Y-%m-%d %H:%M:%S",
+          "min": "2025-12-24"
+        },
+        "reasoning": "Store opened on 2025-12-24, no transactions possible before this date"
+      },
+      {
+        "column": "time_of_transaction",
+        "rule_type": "max_date",
+        "params": {
+          "format": "%Y-%m-%d %H:%M:%S",
+          "max": "today"
+        },
+        "reasoning": "Transaction date cannot be in the future"
+      },
+      {
+        "column": "trans_amt",
+        "rule_type": "in_range",
+        "params": {
+          "min": 0.01,
+          "max": 50000
+        },
+        "reasoning": "Transaction amount must be positive and below fraud threshold"
+      },
+      {
+        "column": "trans_amt",
+        "rule_type": "refund_check",
+        "params": {},
+        "reasoning": "Refunded transactions should not have positive amounts"
+      }
+    ]
+  }
+}
