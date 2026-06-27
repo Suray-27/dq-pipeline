@@ -1,5 +1,5 @@
 trans_id,cust_id,prod_id,trans_amt,time_of_transaction,status
-T001,1,P01,150.00,2026-01-15 10:30:00,completed
+T001,1,P01,15.00,2026-01-15 10:30:00,completed
 T002,2,P02,200.00,2026-02-20 14:15:00,completed
 T003,3,P01,75.50,2026-03-10 09:00:00,pending
 T001,1,P03,300.00,2026-04-05 16:45:00,completed
