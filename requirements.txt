@@ -1,3 +1,4 @@
 requests
 psycopg2-binary
-groqpandas==3.0.3
+groq
+pandas
