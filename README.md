@@ -1,3 +1,5 @@
+![CI](https://github.com/Suray-27/dq-pipeline/actions/workflows/ci.yml/badge.svg)
+
 # AI-Powered Data Quality Pipeline
 
 An end-to-end data quality pipeline that uses LLMs to automatically infer data quality rules, validate data, and suggest fixes for violations.
