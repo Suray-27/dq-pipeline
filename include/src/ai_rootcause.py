@@ -1,6 +1,17 @@
 import os
 import json
 import requests
+import sys
+sys.path.insert(0, "include/src")
+from dotenv import load_dotenv
+load_dotenv()
+
+from config import SOURCES
+from extract import extract
+from transform import transform
+from validate import validate
+from ai_rules import infer_rules
+import json
 
 
 def _call_reasoning_model(prompt: str) -> str:
@@ -116,7 +127,7 @@ def analyze_root_causes(
             "passed": result.get("passed_count", 0),
             "failed": result.get("failed_count", 0),
             "violation_count": len(violations),
-            "violated_columns": list({v["column"] for v in violations}),
+            "violated_columns": list({v["column_name"] for v in violations}),
         }
         # Tag each violation with its source table
         for v in violations:
@@ -158,58 +169,35 @@ def analyze_root_causes(
 
 
 if __name__ == "__main__":
-    from dotenv import load_dotenv
-    load_dotenv()
 
-    # Test with mock violations
-    tables_results = {
-        "customers": {
-            "total_records": 9,
-            "passed_count": 4,
-            "failed_count": 5,
-            "violations": [
-                {"row_index": 0, "column": "id", "rule_type": "unique", "value": "1", "message": "duplicate id"},
-                {"row_index": 8, "column": "id", "rule_type": "unique", "value": "1", "message": "duplicate id"},
-                {"row_index": 4, "column": "email", "rule_type": "regex", "value": "eve@invalid", "message": "invalid email"},
-                {"row_index": 6, "column": "signup_dt", "rule_type": "valid_date", "value": "not_a_date", "message": "invalid date"},
-                {"row_index": 3, "column": "age", "rule_type": "not_null", "value": "nan", "message": "null age"},
-            ],
-        },
-        "transactions": {
-            "total_records": 10,
-            "passed_count": 3,
-            "failed_count": 7,
-            "violations": [
-                {"row_index": 0, "column": "cust_id", "rule_type": "referential_integrity", "value": "1", "message": "cust_id not in curated_customers"},
-                {"row_index": 3, "column": "cust_id", "rule_type": "referential_integrity", "value": "1", "message": "cust_id not in curated_customers"},
-                {"row_index": 7, "column": "cust_id", "rule_type": "referential_integrity", "value": "1", "message": "cust_id not in curated_customers"},
-                {"row_index": 4, "column": "cust_id", "rule_type": "referential_integrity", "value": "9", "message": "cust_id not in curated_customers"},
-                {"row_index": 6, "column": "trans_amt", "rule_type": "in_range", "value": "-99.0", "message": "negative amount"},
-                {"row_index": 8, "column": "time_of_transaction", "rule_type": "max_date", "value": "2027-01-01", "message": "future date"},
-                {"row_index": 9, "column": "time_of_transaction", "rule_type": "min_date", "value": "2025-10-01", "message": "before store opening"},
-            ],
-        },
-    }
+    tables_results = {}
 
+    for source_name, source in SOURCES.items():
+        df = extract(source["file"])
+        rules = infer_rules(df, source_name=source_name)
+        passed, failed, violations = validate(transform(df), rules)
+
+        tables_results[source_name] = {
+            "total_records": len(df),
+            "passed_count": len(passed),
+            "failed_count": len(failed),
+            "violations": violations,
+        }
+
+    # Dependencies from config
     dependencies = {
-        "transactions": ["curated_customers"]
+        s: SOURCES[s]["depends_on"]
+        for s in tables_results
+        if SOURCES[s]["depends_on"]
     }
 
     result = analyze_root_causes(tables_results, dependencies)
 
-    print("\n--- ROOT CAUSE ANALYSIS ---\n")
-    print(f"Overall Health: {result['overall_health']}")
-    print(f"\nExecutive Summary:\n{result['executive_summary']}")
+    print(f"\nOverall Health  : {result['overall_health']}")
+    print(f"Executive Summary: {result['executive_summary']}")
     print(f"\nRoot Causes ({len(result['root_causes'])}):")
     for rc in result["root_causes"]:
         print(f"  [{rc['severity'].upper()}] {rc['cause']}")
-        print(f"  Affects: {rc['affected_tables']} → {rc['violation_count']} violations")
-    print(f"\nCross-table Impacts:")
-    for impact in result["cross_table_impacts"]:
-        print(f"  {impact['source_table']} → {impact['downstream_table']}: {impact['downstream_impact']}")
     print(f"\nPriority Fixes:")
     for fix in result["priority_fixes"]:
-        print(f"  [{fix['effort']} effort] {fix['fix']} → resolves {fix['resolves_violations']} violations")
-    print(f"\nSystemic Recommendations:")
-    for rec in result["systemic_recommendations"]:
-        print(f"  • {rec}")
+        print(f"  [{fix['effort']}] {fix['fix']} → {fix['resolves_violations']} violations")

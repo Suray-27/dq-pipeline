@@ -1,16 +1,8 @@
 import os
 import json
 import pandas as pd
-import sqlalchemy
 from datetime import datetime
-
-
-def get_engine():
-    DB_URL = os.environ.get(
-        "DB_URL_VAR",""
-        #"postgresql://dquser:dqpass@postgres:5432/dqwarehouse"
-    )
-    return sqlalchemy.create_engine(DB_URL)
+from config import get_engine, TABLES
 
 
 def write_lineage(
@@ -26,8 +18,6 @@ def write_lineage(
     rules_applied: int = 0,
     violations_found: int = 0,
 ):
-    """Write a single lineage record for this pipeline run + table."""
-
     outcome = (
         "success" if failed_records == 0
         else "partial" if passed_records > 0
@@ -54,7 +44,7 @@ def write_lineage(
 
     engine = get_engine()
     pd.DataFrame([record]).to_sql(
-        "data_lineage", engine,
+        TABLES["lineage"], engine,
         if_exists="append", index=False
     )
     print(f"[Lineage] Written for '{source_name}' — run_id: {run_id} — outcome: {outcome}")

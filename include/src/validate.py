@@ -1,8 +1,8 @@
-import pandas as pd
-import json
-from datetime import datetime
 import os
+import pandas as pd
 import sqlalchemy
+from datetime import datetime
+from config import get_engine
 
 
 def get_engine():
@@ -79,7 +79,7 @@ def check_referential_integrity(df, col, params):
     ref_col = params["reference_column"]
     try:
         engine = get_engine()
-        ref_df = pd.read_sql(f"SELECT {ref_col} FROM {ref_table}", engine)
+        ref_df = pd.read_sql(f'SELECT "{ref_col}" FROM "{ref_table}"', engine)
         valid_ids = set(ref_df[ref_col].dropna().unique())
         mask = df[col].notna() & ~df[col].isin(valid_ids)
     except Exception as e:
@@ -167,7 +167,7 @@ def validate(df: pd.DataFrame, rules: list) -> tuple:
             violation_records.append({
                 "row_index": int(idx),
                 "id": df.loc[idx].get("id"),
-                "column": col,
+                "column_name": col,
                 "rule_type": rule_type,
                 "message": msg,
                 "value": str(df.loc[idx, col]),

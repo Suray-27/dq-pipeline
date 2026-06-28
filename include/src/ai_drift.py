@@ -2,8 +2,8 @@ import os
 import json
 import requests
 import pandas as pd
-import sqlalchemy
 from datetime import datetime
+from config import get_engine, TABLES
 
 
 def _call_groq(prompt: str) -> str:
@@ -46,13 +46,7 @@ Keep it concise and non-technical.
 """
 
 
-def get_engine():
-    DB_URL = os.environ.get("DB_URL_VAR")
-    return sqlalchemy.create_engine(DB_URL)
-
-
 def save_schema(df: pd.DataFrame, source_name: str, run_id: str):
-    """Save current schema to schema_registry table."""
     engine = get_engine()
     records = []
     for col, dtype in df.dtypes.items():
@@ -64,23 +58,22 @@ def save_schema(df: pd.DataFrame, source_name: str, run_id: str):
             "captured_at": datetime.now().isoformat(),
         })
     pd.DataFrame(records).to_sql(
-        "schema_registry", engine,
+        TABLES["schema_reg"], engine,
         if_exists="append", index=False
     )
     print(f"[Drift] Saved schema for '{source_name}' — {len(records)} columns")
 
 
 def get_previous_schema(source_name: str) -> dict:
-    """Get the most recent schema for this source from registry."""
     engine = get_engine()
     try:
         query = f"""
             SELECT column_name, dtype
-            FROM schema_registry
+            FROM {TABLES["schema_reg"]}
             WHERE source_name = '{source_name}'
             AND pipeline_run_id = (
                 SELECT pipeline_run_id
-                FROM schema_registry
+                FROM {TABLES["schema_reg"]}
                 WHERE source_name = '{source_name}'
                 ORDER BY captured_at DESC
                 LIMIT 1
@@ -93,16 +86,11 @@ def get_previous_schema(source_name: str) -> dict:
 
 
 def detect_drift(df: pd.DataFrame, source_name: str, run_id: str) -> dict:
-    """Compare current schema against previous and return drift report."""
-
-    # Get previous schema before saving current
     previous = get_previous_schema(source_name)
     current = dict(df.dtypes.astype(str))
 
-    # Save current schema
     save_schema(df, source_name, run_id)
 
-    # If no previous schema exists this is the first run
     if not previous:
         print(f"[Drift] First run for '{source_name}' — no drift check needed")
         return {
@@ -112,6 +100,43 @@ def detect_drift(df: pd.DataFrame, source_name: str, run_id: str) -> dict:
             "changes": [],
             "ai_explanation": "First pipeline run — schema baseline established.",
         }
+
+    changes = []
+
+    for col in current:
+        if col not in previous:
+            changes.append({"type": "new_column", "column": col, "dtype": current[col]})
+
+    for col in previous:
+        if col not in current:
+            changes.append({"type": "missing_column", "column": col, "previous_dtype": previous[col]})
+
+    for col in current:
+        if col in previous and current[col] != previous[col]:
+            changes.append({
+                "type": "dtype_changed",
+                "column": col,
+                "previous_dtype": previous[col],
+                "current_dtype": current[col],
+            })
+
+    if changes:
+        print(f"[Drift] {len(changes)} changes detected — calling Groq...")
+        prompt = DRIFT_PROMPT.format(
+            previous=json.dumps(previous, indent=2),
+            current=json.dumps(current, indent=2),
+        )
+        ai_explanation = _call_groq(prompt)
+    else:
+        ai_explanation = "No schema drift detected."
+
+    return {
+        "source_name": source_name,
+        "run_id": run_id,
+        "status": "drift_detected" if changes else "no_drift",
+        "changes": changes,
+        "ai_explanation": ai_explanation,
+    }
 
     # Detect changes
     changes = []

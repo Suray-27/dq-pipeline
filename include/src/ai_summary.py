@@ -2,6 +2,17 @@ import os
 import json
 import requests
 from datetime import datetime
+import sys
+sys.path.insert(0, "include/src")
+from dotenv import load_dotenv
+load_dotenv()
+
+from config import SOURCES
+from extract import extract
+from transform import transform
+from validate import validate
+from ai_rules import infer_rules
+import json
 
 
 def _call_groq(prompt: str) -> str:
@@ -68,7 +79,7 @@ def generate_summary(
     violations_summary = ""
     by_column = {}
     for v in violations:
-        col = v["column"]
+        col = v.get("column_name") or v.get("column", "unknown")  # handle both
         if col not in by_column:
             by_column[col] = []
         by_column[col].append(v["message"])
@@ -109,20 +120,33 @@ def generate_summary(
 
 
 if __name__ == "__main__":
-    # Test with mock data
-    violations = [
-        {"column": "id", "message": "id has duplicate value", "row_index": 0},
-        {"column": "id", "message": "id has duplicate value", "row_index": 8},
-        {"column": "email", "message": "email does not match pattern", "row_index": 4},
-        {"column": "signup_dt", "message": "signup_dt is not a valid date", "row_index": 6},
-        {"column": "age", "message": "age outside range [0, 120]", "row_index": 5},
-        {"column": "age", "message": "age is null", "row_index": 3},
-    ]
-    fixes = [
-        {"row_index": 0, "column": "id", "suggested_fix": "Regenerate unique id", "confidence": "high"},
-        {"row_index": 4, "column": "email", "suggested_fix": "Request correct email", "confidence": "low"},
-    ]
 
-    result = generate_summary(3, 6, violations, fixes)
+    all_violations = []
+    all_fixes = []
+    total_passed = 0
+    total_failed = 0
+
+    for source_name, source in SOURCES.items():
+        df = extract(source["file"])
+        rules = infer_rules(df, source_name=source_name)
+        passed, failed, violations = validate(transform(df), rules)
+
+        all_violations += violations
+        total_passed += len(passed)
+        total_failed += len(failed)
+
+    # Generate summary with real data
+    summary = generate_summary(
+        total_passed,
+        total_failed,
+        all_violations,
+        all_fixes
+    )
+
     print("\n--- AI Summary ---\n")
-    print(result["summary"])
+    print(f"Timestamp  : {summary['timestamp']}")
+    print(f"Total      : {summary['total_records']}")
+    print(f"Passed     : {summary['passed']}")
+    print(f"Failed     : {summary['failed']}")
+    print(f"Pass Rate  : {summary['pass_rate']}%")
+    print(f"\nSummary:\n{summary['summary']}")

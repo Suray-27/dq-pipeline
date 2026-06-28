@@ -1,69 +1,55 @@
-import os
-import json
 import pandas as pd
+import json
+import os
 import sqlalchemy
 from datetime import datetime
+from config import get_engine, TABLES, SOURCES
 
 
-def get_engine():
-    # Read DB_URL inside function, not at module level
-    DB_URL = os.environ.get("DB_URL_VAR")
-    if not DB_URL:
-        raise ValueError("DB_URL environment variable is not set!")
-    return sqlalchemy.create_engine(DB_URL)
-
-
-def load(passed_df, failed_df, violations, fixes):
+def load(
+    passed_df: pd.DataFrame,
+    failed_df: pd.DataFrame,
+    violations: list,
+    fixes: list,
+    source_name: str = "unknown",
+):
     engine = get_engine()
+    now = datetime.now().isoformat()
 
-    passed_df.to_sql("curated_customers", engine, if_exists="replace", index=False)
-    print(f"[Load] curated_customers: {len(passed_df)} rows")
+    # Get table names from config
+    curated_table = SOURCES.get(source_name, {}).get("curated", f"curated_{source_name}")
+    quarantine_table = SOURCES.get(source_name, {}).get("quarantine", f"quarantine_{source_name}")
 
-    failed_df.to_sql("quarantine_customers", engine, if_exists="replace", index=False)
-    print(f"[Load] quarantine_customers: {len(failed_df)} rows")
+    # Add timestamp to curated and quarantine
+    passed_df = passed_df.copy()
+    failed_df = failed_df.copy()
+    passed_df["captured_at"] = now
+    failed_df["captured_at"] = now
 
-    pd.DataFrame(violations).to_sql("dq_violations", engine, if_exists="replace", index=False)
-    print(f"[Load] dq_violations: {len(violations)} rows")
+    passed_df.to_sql(curated_table, engine, if_exists="replace", index=False)
+    print(f"[Load] {curated_table}: {len(passed_df)} rows")
+
+    failed_df.to_sql(quarantine_table, engine, if_exists="replace", index=False)
+    print(f"[Load] {quarantine_table}: {len(failed_df)} rows")
+
+    if violations:
+        violations_df = pd.DataFrame(violations)
+        violations_df["captured_at"] = now
+        violations_df = violations_df.rename(columns={"column": "column_name"})
+        violations_df.to_sql(
+            TABLES["violations"], engine,
+            if_exists="append", index=False
+        )
+        print(f"[Load] {TABLES['violations']}: {len(violations_df)} rows")
 
     if fixes:
-        pd.DataFrame(fixes).to_sql("dq_fix_suggestions", engine, if_exists="replace", index=False)
-        print(f"[Load] dq_fix_suggestions: {len(fixes)} rows")
+        fixes_df = pd.DataFrame(fixes)
+        fixes_df["captured_at"] = now
+        fixes_df.to_sql(
+            TABLES["fixes"], engine,
+            if_exists="append", index=False
+        )
+        print(f"[Load] {TABLES['fixes']}: {len(fixes_df)} rows")
 
     engine.dispose()
-    print("[Load] Done")
-
-def save_drift_report(report: dict):
-    engine = get_engine()
-    pd.DataFrame([{
-        "source_name": report["source_name"],
-        "run_id": report["run_id"],
-        "status": report["status"],
-        "changes": json.dumps(report["changes"]),
-        "ai_explanation": report["ai_explanation"],
-        "captured_at": datetime.now().isoformat(),
-    }]).to_sql(
-        "dq_drift_reports", engine,
-        if_exists="append", index=False
-    )
-    print(f"[Load] Saved drift report — status: {report['status']}")
-
-
-if __name__ == "__main__":
-    import sys
-    sys.path.insert(0, "include/src")
-    from extract import extract
-    from transform import transform
-    from validate import validate
-
-    df = extract("data/raw/customers.csv")
-    df = transform(df)
-
-    with open("data/rules.json") as f:
-        rules = json.load(f)
-
-    passed, failed, violations = validate(df, rules)
-
-    with open("data/fix_suggestions.json") as f:
-        fixes = json.load(f)
-
-    load(passed, failed, violations, fixes)
+    print(f"[Load] Done — {source_name}")
