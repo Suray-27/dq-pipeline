@@ -3,13 +3,7 @@
     "column": "id",
     "rule_type": "unique",
     "params": {},
-    "reasoning": "Each customer should have a unique identifier"
-  },
-  {
-    "column": "name",
-    "rule_type": "not_null",
-    "params": {},
-    "reasoning": "Customer name is required"
+    "reasoning": "Customer IDs must be unique to identify each customer"
   },
   {
     "column": "email",
@@ -17,7 +11,7 @@
     "params": {
       "pattern": "^[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\\.[a-zA-Z0-9-.]+$"
     },
-    "reasoning": "Email should follow standard email format"
+    "reasoning": "Email addresses must follow the standard format"
   },
   {
     "column": "signup_dt",
@@ -25,16 +19,7 @@
     "params": {
       "format": "%Y-%m-%d"
     },
-    "reasoning": "Signup date should be in YYYY-MM-DD format"
-  },
-  {
-    "column": "signup_dt",
-    "rule_type": "max_date",
-    "params": {
-      "format": "%Y-%m-%d",
-      "max": "today"
-    },
-    "reasoning": "Signup date should not be in the future"
+    "reasoning": "Signup dates must be in the correct format"
   },
   {
     "column": "age",
@@ -43,24 +28,12 @@
       "min": 0,
       "max": 120
     },
-    "reasoning": "Age should be within a reasonable range"
+    "reasoning": "Ages must be within a reasonable range"
   },
   {
     "column": "age",
     "rule_type": "not_null",
     "params": {},
-    "reasoning": "Age is required"
-  },
-  {
-    "column": "status",
-    "rule_type": "allowed_values",
-    "params": {
-      "values": [
-        "active",
-        "inactive",
-        "pending"
-      ]
-    },
-    "reasoning": "Status should be one of the allowed values"
+    "reasoning": "Age cannot be null or missing"
   }
 ]

@@ -16,11 +16,10 @@ def load(
     engine = get_engine()
     now = datetime.now().isoformat()
 
-    # Get table names from config
-    curated_table = SOURCES.get(source_name, {}).get("curated", f"curated_{source_name}")
-    quarantine_table = SOURCES.get(source_name, {}).get("quarantine", f"quarantine_{source_name}")
+    # Use lowercase for pandas to_sql — Snowflake stores as uppercase automatically
+    curated_table   = SOURCES.get(source_name, {}).get("curated", f"curated_{source_name}").lower()
+    quarantine_table = SOURCES.get(source_name, {}).get("quarantine", f"quarantine_{source_name}").lower()
 
-    # Add timestamp to curated and quarantine
     passed_df = passed_df.copy()
     failed_df = failed_df.copy()
     passed_df["captured_at"] = now
@@ -37,7 +36,7 @@ def load(
         violations_df["captured_at"] = now
         violations_df = violations_df.rename(columns={"column": "column_name"})
         violations_df.to_sql(
-            TABLES["violations"], engine,
+            TABLES["violations"].lower(), engine,
             if_exists="append", index=False
         )
         print(f"[Load] {TABLES['violations']}: {len(violations_df)} rows")
@@ -46,7 +45,7 @@ def load(
         fixes_df = pd.DataFrame(fixes)
         fixes_df["captured_at"] = now
         fixes_df.to_sql(
-            TABLES["fixes"], engine,
+            TABLES["fixes"].lower(), engine,
             if_exists="append", index=False
         )
         print(f"[Load] {TABLES['fixes']}: {len(fixes_df)} rows")

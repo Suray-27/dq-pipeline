@@ -60,77 +60,64 @@ Respond with ONLY the JSON array, no other text, no markdown fences.
 
 
 def get_schema_hash(df: pd.DataFrame) -> str:
-    """Generate a hash of the schema — columns + dtypes."""
     schema = df.dtypes.astype(str).to_dict()
     schema_str = json.dumps(schema, sort_keys=True)
     return hashlib.md5(schema_str.encode()).hexdigest()
 
 
 def get_cached_hash(source_name: str) -> str:
-    """Load previously saved schema hash."""
-    hash_path = f"include/data/.schema_hash_{source_name}.txt"
-    try:
-        with open(hash_path) as f:
-            return f.read().strip()
-    except FileNotFoundError:
-        return ""
+    from config import get_metadata
+    return get_metadata(source_name, "schema_hash")
 
 
-def save_schema_hash(source_name: str, schema_hash: str):
-    """Save current schema hash for next run comparison."""
-    hash_path = f"include/data/.schema_hash_{source_name}.txt"
-    with open(hash_path, "w") as f:
-        f.write(schema_hash)
-    print(f"[AI Rules] Schema hash saved for '{source_name}'")
+def save_schema_hash(source_name: str, schema_hash: str,
+                     pipeline_run_id: str = "", source_run_id: str = ""):
+    from config import set_metadata
+    set_metadata(source_name, "schema_hash", schema_hash,
+                 pipeline_run_id, source_run_id)
 
+def save_rules(source_name: str, rules: list,
+               pipeline_run_id: str = "", source_run_id: str = ""):
+    from config import set_metadata
+    set_metadata(source_name, "rules", json.dumps(rules),
+                 pipeline_run_id, source_run_id)
 
-def load_business_rules(source_name: str, config_path: str = "include/data/business_rules.json") -> list:
-    """Load predefined business rules for a specific table."""
-    try:
-        with open(config_path) as f:
-            config = json.load(f)
-        rules = config.get(source_name, {}).get("rules", [])
-        print(f"[AI Rules] Loaded {len(rules)} business rules for '{source_name}'")
+def load_business_rules(source_name: str) -> list:
+    from config import get_metadata
+    rules_json = get_metadata(source_name, "business_rules")
+    if rules_json:
+        rules = json.loads(rules_json)
+        print(f"[AI Rules] Loaded {len(rules)} business rules from Snowflake for '{source_name}'")
         return rules
-    except FileNotFoundError:
-        print(f"[AI Rules] No business rules config found at {config_path}")
-        return []
+    print(f"[AI Rules] No business rules found for '{source_name}'")
+    return []
 
 
 def load_cached_rules(source_name: str) -> list:
-    """Load previously saved rules from JSON file."""
-    rules_path = f"include/data/rules_{source_name}.json"
-    try:
-        with open(rules_path) as f:
-            rules = json.load(f)
-        print(f"[AI Rules] Loaded {len(rules)} cached rules for '{source_name}'")
+    from config import get_metadata
+    rules_json = get_metadata(source_name, "rules")
+    if rules_json:
+        rules = json.loads(rules_json)
+        print(f"[AI Rules] Loaded {len(rules)} cached rules from Snowflake for '{source_name}'")
         return rules
-    except FileNotFoundError:
-        return []
+    return []
 
 
-def infer_rules(df: pd.DataFrame, source_name: str = "unknown") -> list:
-    """
-    Infer rules using Groq + merge with business config rules.
-    Skips Groq call if schema hasn't changed since last run.
-    """
+def infer_rules(df: pd.DataFrame, source_name: str = "unknown",
+                pipeline_run_id: str = "", source_run_id: str = "") -> list:
     current_hash = get_schema_hash(df)
     cached_hash = get_cached_hash(source_name)
 
-    # Check if schema changed
     if current_hash == cached_hash:
         cached_rules = load_cached_rules(source_name)
         if cached_rules:
-            print(f"[AI Rules] Schema unchanged for '{source_name}' — skipping Groq, using cached rules")
+            print(f"[AI Rules] Schema unchanged — skipping Groq, using cached rules")
             return cached_rules
 
-    print(f"[AI Rules] Schema changed or first run for '{source_name}' — calling Groq...")
-
-    # Load business rules
+    print(f"[AI Rules] Schema changed — calling Groq...")
     business_rules = load_business_rules(source_name)
     existing_rule_columns = list({r["column"] for r in business_rules})
 
-    # Load description from config
     try:
         with open("include/data/business_rules.json") as f:
             config = json.load(f)
@@ -158,16 +145,13 @@ def infer_rules(df: pd.DataFrame, source_name: str = "unknown") -> list:
     ai_rules = json.loads(raw)
     print(f"[AI Rules] Groq inferred {len(ai_rules)} rules")
 
-    # Merge business rules + AI rules
     existing_cols_rules = {(r["column"], r["rule_type"]) for r in business_rules}
-    new_rules = [r for r in ai_rules if (r["column"], r["rule_type"]) not in existing_cols_rules]
+    new_rules = [r for r in ai_rules
+                 if (r["column"], r["rule_type"]) not in existing_cols_rules]
     merged = business_rules + new_rules
     print(f"[AI Rules] Total merged rules: {len(merged)}")
 
-    # Save rules and schema hash for next run
-    rules_path = f"include/data/rules_{source_name}.json"
-    with open(rules_path, "w") as f:
-        json.dump(merged, f, indent=2)
-    save_schema_hash(source_name, current_hash)
+    save_rules(source_name, merged, pipeline_run_id, source_run_id)
+    save_schema_hash(source_name, current_hash, pipeline_run_id, source_run_id)
 
     return merged

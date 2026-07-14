@@ -45,13 +45,13 @@
     "column": "trans_id",
     "rule_type": "unique",
     "params": {},
-    "reasoning": "Each transaction should have a unique transaction ID."
+    "reasoning": "Each transaction should have a unique id"
   },
   {
     "column": "prod_id",
     "rule_type": "not_null",
     "params": {},
-    "reasoning": "Each transaction should be associated with a product ID."
+    "reasoning": "Product id should always be present for a valid transaction"
   },
   {
     "column": "status",
@@ -63,6 +63,6 @@
         "refunded"
       ]
     },
-    "reasoning": "Status should only be one of the allowed values, and should be case-insensitive."
+    "reasoning": "Status can only be one of the three defined values, and should be case insensitive"
   }
 ]
