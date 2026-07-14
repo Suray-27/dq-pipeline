@@ -1,158 +1,121 @@
-![CI](https://github.com/Suray-27/dq-pipeline/actions/workflows/ci.yml/badge.svg)
+# AI-Powered Data Quality & Ingestion Pipeline
 
-# AI-Powered Data Quality Pipeline
+[![CI](https://github.com/Suray-27/dq-pipeline/actions/workflows/ci.yml/badge.svg)](https://github.com/Suray-27/dq-pipeline/actions/workflows/ci.yml)
 
-An end-to-end data quality pipeline that uses LLMs to automatically infer data quality rules, validate data, and suggest fixes for violations.
+An automated, metadata-driven **Extract-Transform-Load (ELT)** data quality orchestration pipeline. The system processes incoming datasets, automatically intercepts structural schema drift, generates adaptive validation rules using Large Language Models, quarantines compliance violations, and provides natural language root-cause diagnostic feedback.
 
-## Architecture
+---
+
+## 🏗️ Conceptual Architecture & Data Flow
+
+The project is built around the principle of **Closed-Loop Data Quality Management**. Instead of allowing anomalous data to break production models or downstream dashboards, the pipeline separates data content validation from structural schema mutations using a modular architecture.
 
 ```
-Raw Source (CSV)
-      ↓
-Extract (Python + Pandas)
-      ↓
-AI Agent: Infers data quality rules from schema + sample data
-(Groq LLM — llama-3.3-70b-versatile)
-      ↓
-Transform — standard cleaning (trim, normalize casing)
-      ↓
-Validate — run AI-generated rules as actual checks
-      ↓
-      ├── Pass → Load to curated table (Neon PostgreSQL)
-      └── Fail → AI Agent analyzes failures, suggests fixes
-                  → Load to quarantine table
-      ↓
-Orchestration: Airflow DAG on Astronomer (runs daily at 6am)
-      ↓
-Output: Streamlit Data Quality Dashboard
+[ Raw CSV Input File Layer ]
+│
+▼
+
+EXTRACT ─────────► [ MD5 Signature Match? ] ──(Yes)──► Skip Execution
+│ (No)
+▼
+
+DRIFT INSPECTOR ◄► [ Snowflake Schema Registry ] ──(Changed/First Run)──► Groq AI Impact Analysis
+│ (Unchanged)
+▼
+
+RULES ENGINE ◄───► [ Local JSON Cache State ] ───────(Missing Columns)──► Groq AI Adaptive Inference
+│
+▼
+
+VALIDATION ENGINE ──► [ Vectorized Check Array ]
+├── (Passed Rows) ──────► 5. LOAD ──► [ Curated Snowflake Tables ]
+└── (Quarantined Rows) ──► 6. DIAGNOSTIC LAYER ──► Groq AI Root-Cause ──► [ Violations & Fixes Logs ]
 ```
 
-## Tech Stack
+### 🧠 The Core Data Lifecycle Engineering Concepts
 
-| Layer | Technology |
+#### 1. Optimization-First Ingestion Gate
+To protect database computation metrics and avoid redundant processing, raw data is first cryptographically fingerprinted using an MD5 hash check. If the signature matches a previously completed entry in Snowflake's log layer, the run completes instantly without consuming compute or API quotas.
+
+#### 2. Isolated Schema Drift Tracking
+Data layout alterations (added columns, dropped columns, or mutated data types) represent structural modifications rather than day-to-day transaction records. The pipeline decouples this check into a separate schema tracking layer. Groq's LLM is brought in only when layout mutations appear, creating clear documentation of the changes without slowing down normal ingestion.
+
+#### 3. Hybrid Automated Rules Engines
+Hardcoded rules quickly fall behind real-world data tracking needs. The engine uses a hybrid system that merges static user constraints (like `business_rules.json`) with dynamic, AI-inferred column boundaries drawn from statistical data samples.
+
+#### 4. Vectorized Filtering Matrices
+Instead of handling records using slow Python iteration structures, datasets are run through parallel vectorized Pandas conditional logic arrays. High-quality items flow straight to the `curated` analysis targets, while failing rows are isolated, evaluated for errors, and routed directly to a `quarantine` space.
+
+#### 5. Conversational Analytics Layer
+The application leverages a persistent session loop to create a contextual chat data experience. When you query data anomalies in plain language via the Streamlit dashboard, the system binds live error violation metrics to the foundational context window, allowing you to debug data health issues without writing complex SQL code.
+
+---
+
+## 🛠️ Tech Stack Matrix
+
+| Architectural Layer | Technology Deployment |
 |---|---|
-| Language | Python 3.11 |
-| AI / LLM | Groq API (llama-3.3-70b-versatile) |
-| Data Processing | Pandas |
-| Database | Neon PostgreSQL (cloud) |
-| Orchestration | Apache Airflow on Astronomer |
-| Dashboard | Streamlit + Plotly |
-| Containerization | Docker + Docker Compose |
-| Version Control | Git + GitHub |
+| Language Runtime | Python 3.12 |
+| AI / LLM Engine | Groq API (`llama-3.3-70b-versatile`) |
+| Core Processing Engine | Pandas DataFrames |
+| Cloud Storage / Target Warehouse | Snowflake (Case-safe unquoted identifiers) |
+| Orchestration Framework | Apache Airflow on Astronomer Platform / Local Wrapper Engine |
+| Metrics UI Dashboard | Streamlit Dashboard Layer |
+| Containerized Runtime Environment | Docker + Docker Compose Multi-Container Toolset |
+| Source Control / Versioning | Git + GitHub Actions |
+
+---
+
+## ⚙️ Data Quality Rules Engine Options
+
+The vectorized processing engine natively translates these validation strategies inside the pipeline:
+
+| Rule Strategy Tag | Functional Description | Expected Parameter Structure (`params`) |
+|---|---|---|
+| `not_null` | Blocks missing values, spaces, or unparsed `nan` types. | `{}` |
+| `unique` | Blocks duplicate records inside targeted unique fields. | `{}` |
+| `in_range` | Restricts numerical entry systems to upper and lower bounds. | `{"min": 1, "max": 5000}` |
+| `valid_date` | Confirms calendar data parameters match layout settings. | `{"format": "%Y-%m-%d"}` |
+| `max_date` | Catches anomalous forward dates set in the future. | `{"format": "%Y-%m-%d", "max": "today"}` |
+| `regex` | Validates value layouts using strict text pattern matching. | `{"pattern": "^[A-Z0-9._%+-]+@[A-Z0-9.-]+\\.[A-Z]{2,}$"}` |
+| `allowed_values` | Restricts properties to an exact set of categorical strings. | `{"values": ["success", "failed", "pending"]}` |
+
+---
 
 ## Project Structure
 
 ```
-dq_pipeline/
-├── dags/
-│   └── dq_pipeline_dag.py      # Airflow DAG
-├── include/
-│   ├── src/
-│   │   ├── extract.py          # Extract raw data
-│   │   ├── ai_rules.py         # AI rule inference (Groq)
-│   │   ├── transform.py        # Standard cleaning
-│   │   ├── validate.py         # Rule engine
-│   │   ├── ai_fixes.py         # AI fix suggestions (Groq)
-│   │   └── load.py             # Load to PostgreSQL
-│   └── data/
-│       └── raw/customers.csv   # Sample raw data
-├── dashboard.py                # Streamlit dashboard
-├── docker-compose.yml          # Local Docker setup
-├── Dockerfile                  # Astronomer runtime
-├── requirements.txt            # Python dependencies
-└── .env                        # API keys (not committed)
+
 ```
 
-## Data Quality Rules (AI-Inferred)
-
-The AI agent automatically infers these rule types from schema and sample data:
-
-| Rule Type | Description | Example |
-|---|---|---|
-| `not_null` | Column must have a value | `age` must not be null |
-| `unique` | No duplicate values | `id` must be unique |
-| `in_range` | Value within bounds | `age` between 0 and 120 |
-| `valid_date` | Parseable date format | `signup_dt` in YYYY-MM-DD |
-| `max_date` | Date not in future | `signup_dt` ≤ today |
-| `regex` | Matches pattern | `email` matches email pattern |
-| `allowed_values` | Value in allowed set | `status` in [active, inactive, pending] |
-
-## Sample Results
-
-Given 9 raw customer records with planted issues:
-
-| Outcome | Rows |
-|---|---|
-| ✅ Curated (clean) | 3 |
-| 🚫 Quarantined (violations) | 6 |
-| ⚠️ Violations detected | 6 |
-
-Issues caught:
-- Duplicate `id`
-- Invalid email format
-- Unparseable date
-- Null age
-- Out-of-range age (150)
-- Inconsistent status casing (auto-fixed in Transform)
-
-## Setup & Running Locally
+## 🚀 Setup & Execution Quickstart
 
 ### Prerequisites
-- Docker Desktop with WSL2
-- Python 3.11+
-- Groq API key (https://console.groq.com)
+* Docker Desktop with active WSL2 integration
+- Python 3.12+ environment
+- Groq API credentials profile account
+- Connected Snowflake database instance setup workspace
 
-### Steps
+### Ingestion Execution Command Sequences
 
 ```bash
-# Clone the repo
-git clone https://github.com/Suray-27/dq-pipeline.git
-cd dq-pipeline
-
-# Create virtual environment
+# Initialize isolated Python virtual environment workspace
 python3 -m venv venv
 source venv/bin/activate
-
-# Install dependencies
 pip install -r requirements.txt
 
-# Set environment variables
+# Configure system environment configurations
 cp .env.example .env
-# Edit .env with your API keys
+# Edit .env parameters to assign your Snowflake user credentials and Groq API token
 
-# Start PostgreSQL
-docker-compose up -d
+# Initialize standard execution tracking log structures in Snowflake
+python3 include/src/config.py
 
-# Run the pipeline
+# Run the ingestion orchestrator engine locally
 python3 include/src/pipeline.py
 
-# Launch dashboard
+# Boot up the interactive operational visualization metrics cockpit
 streamlit run dashboard.py
-```
-
-## Environment Variables
-
-| Variable | Description |
-|---|---|
-| `GROQ_API_KEY` | Groq API key for LLM inference |
-| `DB_URL` | PostgreSQL connection string |
-
-## Dashboard
-
-The Streamlit dashboard shows:
-- Pipeline summary metrics (pass rate, violation count)
-- Pass vs fail pie chart
-- Violations breakdown by column and rule type
-- Curated and quarantined data tables
-- AI-generated fix suggestions per violated record
-
-## Key Design Decisions
-
-- **AI rules are structured JSON** — not free text, so they can be executed programmatically
-- **Transform before Validate** — deterministic cleaning runs first to avoid false violations
-- **Quarantine not delete** — bad rows are held for review, never discarded
-- **AI fixes are suggestions only** — confidence scores guide human review, not auto-correction
-- **XCom for task communication** — Airflow tasks pass data via XCom since each runs in a separate process
 
 ## Author
 

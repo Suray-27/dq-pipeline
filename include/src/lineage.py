@@ -55,6 +55,10 @@ if __name__ == "__main__":
     from dotenv import load_dotenv
     load_dotenv()
 
+    # Dynamic environment paths with fallback defaults for testing
+    TEST_CUSTOMERS_PATH = os.environ.get("TEST_CUSTOMERS_PATH", "data/raw/customers.csv")
+    TEST_TRANSACTIONS_PATH = os.environ.get("TEST_TRANSACTIONS_PATH", "data/raw/transactions.csv")
+
     # Test with mock data
     run_id = datetime.now().strftime("%Y%m%d%H%M%S")
 
@@ -62,7 +66,7 @@ if __name__ == "__main__":
     write_lineage(
         run_id=run_id,
         source_name="customers",
-        source_file="include/data/raw/customers.csv",
+        source_file=TEST_CUSTOMERS_PATH,
         total_records=9,
         passed_records=3,
         failed_records=6,
@@ -77,7 +81,7 @@ if __name__ == "__main__":
     write_lineage(
         run_id=run_id,
         source_name="transactions",
-        source_file="include/data/raw/transactions.csv",
+        source_file=TEST_TRANSACTIONS_PATH,
         total_records=10,
         passed_records=2,
         failed_records=8,

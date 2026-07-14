@@ -1,10 +1,18 @@
-from config import get_engine, SOURCES, TABLES
-import json
 import os
 import sys
+import json
 import hashlib
-sys.path.insert(0, "include/src")
+import pandas as pd
+from datetime import datetime
+from dotenv import load_dotenv
 
+# Dynamic environment configurations with fallback defaults
+SRC_DIR = os.environ.get("SRC_DIR", "include/src")
+sys.path.insert(0, SRC_DIR)
+
+load_dotenv()
+
+from config import get_engine, SOURCES, TABLES, get_active_sources
 from ai_rootcause import analyze_root_causes
 from extract import extract
 from ai_rules import infer_rules
@@ -15,15 +23,10 @@ from ai_summary import generate_summary
 from ai_drift import detect_drift
 from lineage import write_lineage
 from load import load
-import pandas as pd
-from datetime import datetime
-from dotenv import load_dotenv
-load_dotenv()
 
 
 def get_file_hash(filepath: str) -> str:
     with open(filepath, "rb") as f:
-        import hashlib
         return hashlib.md5(f.read()).hexdigest()
 
 
@@ -114,7 +117,6 @@ def run():
     run_id = datetime.now().strftime("%Y%m%d%H%M%S")
     print(f"[Pipeline] Run ID: {run_id}")
 
-    from config import get_active_sources
     active_sources = get_active_sources()
     print(f"[Pipeline] Active sources: {list(active_sources.keys())}")
 
@@ -195,7 +197,7 @@ def run():
             "ai_explanation": drift["ai_explanation"],
             "captured_at": datetime.now().isoformat(),
         }]).to_sql(
-            TABLES["drift"], engine,
+            TABLES["drift"].lower(), engine,  # <-- Force .lower() here!
             if_exists="append", index=False
         )
 

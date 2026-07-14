@@ -61,7 +61,11 @@ def analyze_failures(violations: list) -> list:
 
 
 if __name__ == "__main__":
-    with open("data/violations.json") as f:
+    # Dynamic environment paths with fallback defaults
+    VIOLATIONS_FILE = os.environ.get("VIOLATIONS_FILE_PATH", "data/violations.json")
+    FIX_SUGGESTIONS_FILE = os.environ.get("FIX_SUGGESTIONS_FILE_PATH", "data/fix_suggestions.json")
+
+    with open(VIOLATIONS_FILE) as f:
         violations = json.load(f)
 
     fixes = analyze_failures(violations)
@@ -73,6 +77,6 @@ if __name__ == "__main__":
         print(f"  Fix        : {fix['suggested_fix']}")
         print(f"  Confidence : {fix['confidence']}")
 
-    with open("data/fix_suggestions.json", "w") as f:
+    with open(FIX_SUGGESTIONS_FILE, "w") as f:
         json.dump(fixes, f, indent=2)
-    print("\n[AI Fixes] Saved to data/fix_suggestions.json")
+    print(f"\n[AI Fixes] Saved to {FIX_SUGGESTIONS_FILE}")

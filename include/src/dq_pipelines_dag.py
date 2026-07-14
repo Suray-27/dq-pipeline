@@ -1,6 +1,14 @@
+import os
+import sys
 from airflow import DAG
 from airflow.providers.standard.operators.python import PythonOperator
 from datetime import datetime, timedelta
+
+AIRFLOW_SRC_DIR = os.environ.get("AIRFLOW_SRC_DIR", "/usr/local/airflow/include/src")
+if AIRFLOW_SRC_DIR not in sys.path:
+    sys.path.insert(0, AIRFLOW_SRC_DIR)
+
+from config import SOURCES
 
 default_args = {
     "owner": "xander",
@@ -10,162 +18,104 @@ default_args = {
 }
 
 with DAG(
-    dag_id="dq_pipeline",
+    dag_id="dq_pipeline_v2",
     default_args=default_args,
-    description="AI-powered Data Quality Pipeline",
+    description="Enterprise Multi-Source AI Data Quality Pipeline",
     schedule="0 6 * * *",
     start_date=datetime(2026, 1, 1),
     catchup=False,
-    tags=["data-quality", "ai"],
+    tags=["data-quality", "ai", "multi-source"],
 ) as dag:
 
-    def extract_task(**context):
-        import sys
-        sys.path.insert(0, "/usr/local/airflow/include/src")
-        from extract import extract
-        df = extract("/usr/local/airflow/include/data/raw/customers.csv")
-        context["ti"].xcom_push(key="extracted", value=df.to_json())
-
-    def infer_rules_task(**context):
-        import sys
-        import json
-        import pandas as pd
-        sys.path.insert(0, "/usr/local/airflow/include/src")
-        from ai_rules import infer_rules
-        data = context["ti"].xcom_pull(task_ids="extract", key="extracted")
-        df = pd.read_json(data)
-        rules = infer_rules(df)
-        context["ti"].xcom_push(key="rules", value=json.dumps(rules))
-
-    def drift_detection_task(**context):
-        import sys
+    def run_pipeline_for_source(source_name, **context):
+        """Processes an individual source fully through the workflow engine step-by-step."""
         import json
         import pandas as pd
         from datetime import datetime
-        sys.path.insert(0, "/usr/local/airflow/include/src")
-        from ai_drift import detect_drift
-        data = context["ti"].xcom_pull(task_ids="extract", key="extracted")
-        df = pd.read_json(data)
-        run_id = datetime.now().strftime("%Y%m%d%H%M%S")
-        report = detect_drift(df, source_name="customers", run_id=run_id)
-        context["ti"].xcom_push(key="drift_report", value=json.dumps(report))
-        context["ti"].xcom_push(key="run_id", value=run_id)
-
-    def transform_task(**context):
-        import sys
-        import pandas as pd
-        sys.path.insert(0, "/usr/local/airflow/include/src")
+        
+        from extract import extract
         from transform import transform
-        data = context["ti"].xcom_pull(task_ids="extract", key="extracted")
-        df = pd.read_json(data)
-        df = transform(df)
-        context["ti"].xcom_push(key="transformed", value=df.to_json())
-
-    def validate_task(**context):
-        import sys
-        import json
-        import pandas as pd
-        sys.path.insert(0, "/usr/local/airflow/include/src")
         from validate import validate
-        data = context["ti"].xcom_pull(task_ids="transform", key="transformed")
-        rules_str = context["ti"].xcom_pull(task_ids="infer_rules", key="rules")
-        df = pd.read_json(data)
-        rules = json.loads(rules_str)
-        passed, failed, violations = validate(df, rules)
-        context["ti"].xcom_push(key="passed", value=passed.to_json())
-        context["ti"].xcom_push(key="failed", value=failed.to_json())
-        context["ti"].xcom_push(key="violations", value=json.dumps(violations, default=str))
-
-    def ai_fixes_task(**context):
-        import sys
-        import json
-        sys.path.insert(0, "/usr/local/airflow/include/src")
+        from ai_rules import infer_rules
+        from ai_drift import detect_drift
         from ai_fixes import analyze_failures
-        violations_str = context["ti"].xcom_pull(task_ids="validate", key="violations")
-        violations = json.loads(violations_str)
-        fixes = analyze_failures(violations) if violations else []
-        context["ti"].xcom_push(key="fixes", value=json.dumps(fixes))
-
-    def ai_summary_task(**context):
-        import sys
-        import json
-        import pandas as pd
-        sys.path.insert(0, "/usr/local/airflow/include/src")
-        from ai_summary import generate_summary
-        violations = json.loads(
-            context["ti"].xcom_pull(task_ids="validate", key="violations")
-        )
-        fixes = json.loads(
-            context["ti"].xcom_pull(task_ids="ai_fixes", key="fixes")
-        )
-        passed_count = len(pd.read_json(
-            context["ti"].xcom_pull(task_ids="validate", key="passed")
-        ))
-        failed_count = len(pd.read_json(
-            context["ti"].xcom_pull(task_ids="validate", key="failed")
-        ))
-        summary = generate_summary(passed_count, failed_count, violations, fixes)
-        context["ti"].xcom_push(key="summary", value=json.dumps(summary))
-
-    def load_task(**context):
-        import sys
-        import os
-        import json
-        import pandas as pd
-        import sqlalchemy
-        sys.path.insert(0, "/usr/local/airflow/include/src")
         from load import load
+        
+        source_info = SOURCES[source_name]
+        run_id = datetime.now().strftime("%Y%m%d%H%M%S")
+        
+        print(f"Starting Multi-Source workflow execution loop for: {source_name}")
+        
+        # 1. Ingest & Drift Track
+        df_raw = extract(source_info["file"])
+        drift_report = detect_drift(df_raw, source_name=source_name, run_id=run_id)
+        
+        # 2. Rule Inference Engine
+        rules = infer_rules(df_raw, source_name=source_name)
+        
+        # 3. Clean and Validate
+        df_clean = transform(df_raw, source_name=source_name)
+        passed, failed, violations = validate(df_clean, rules)
+        
+        # 4. AI Repair Layer
+        fixes = analyze_failures(violations) if violations else []
+        
+        # 5. Database Commit Staging
+        load(passed, failed, violations, fixes, source_name=source_name)
+        
+        # Package and bubble data out to pipeline-wide metrics aggregates
+        return {
+            "source_name": source_name,
+            "passed_count": len(passed),
+            "failed_count": len(failed),
+            "violations": violations,
+            "fixes": fixes,
+            "drift": drift_report
+        }
 
-        passed = pd.read_json(
-            context["ti"].xcom_pull(task_ids="validate", key="passed")
-        )
-        failed = pd.read_json(
-            context["ti"].xcom_pull(task_ids="validate", key="failed")
-        )
-        violations = json.loads(
-            context["ti"].xcom_pull(task_ids="validate", key="violations")
-        )
-        fixes = json.loads(
-            context["ti"].xcom_pull(task_ids="ai_fixes", key="fixes")
-        )
-        summary = json.loads(
-            context["ti"].xcom_pull(task_ids="ai_summary", key="summary")
-        )
-        drift = json.loads(
-            context["ti"].xcom_pull(task_ids="drift_detection", key="drift_report")
-        )
+    def aggregate_global_analysis_task(**context):
+        """Collects metrics from ALL processed sources to generate global summaries and root causes."""
+        import json
+        from ai_summary import generate_summary
+        from ai_root_cause import analyze_root_causes
+        
+        global_results = {}
+        all_violations = []
+        all_fixes = []
+        total_passed = 0
+        total_failed = 0
+        
+        # Pull performance metrics dynamically out of every single executed upstream task loop
+        for source_name in SOURCES.keys():
+            task_data = context["ti"].xcom_pull(task_ids=f"process_{source_name}")
+            if task_data:
+                global_results[source_name] = task_data
+                all_violations += task_data["violations"]
+                all_fixes += task_data["fixes"]
+                total_passed += task_data["passed_count"]
+                total_failed += task_data["failed_count"]
 
-        # Load curated/quarantine/violations/fixes
-        load(passed, failed, violations, fixes)
+        # Run multi-source metrics cross-evaluations
+        summary = generate_summary(total_passed, total_failed, all_violations, all_fixes)
+        
+        dependencies = {s: SOURCES[s]["depends_on"] for s in SOURCES if SOURCES[s]["depends_on"]}
+        root_cause = analyze_root_causes(global_results, dependencies=dependencies)
+        
+        print("[Global Aggregator] Complete Pipeline Cross-Table Assessment Finished.")
 
-        # Save summary
-        DB_URL = os.environ.get("DB_URL_VAR")
-        engine = sqlalchemy.create_engine(DB_URL)
-        pd.DataFrame([summary]).to_sql(
-            "dq_run_summaries", engine,
-            if_exists="append", index=False
+    # Dynamically build pipeline nodes inside the DAG for every file defined in your config matrix
+    summary_task = PythonOperator(
+        task_id="global_pipeline_summary",
+        python_callable=aggregate_global_analysis_task,
+        provide_context=True
+    )
+
+    for source in SOURCES.keys():
+        process_task = PythonOperator(
+            task_id=f"process_{source}",
+            python_callable=run_pipeline_for_source,
+            op_kwargs={"source_name": source},
+            provide_context=True
         )
-
-        # Save drift report
-        pd.DataFrame([{
-            "source_name": drift["source_name"],
-            "run_id": drift["run_id"],
-            "status": drift["status"],
-            "changes": json.dumps(drift["changes"]),
-            "ai_explanation": drift["ai_explanation"],
-        }]).to_sql(
-            "dq_drift_reports", engine,
-            if_exists="append", index=False
-        )
-        print("[Load] All data saved successfully")
-
-    t1 = PythonOperator(task_id="extract", python_callable=extract_task)
-    t2 = PythonOperator(task_id="infer_rules", python_callable=infer_rules_task)
-    t3 = PythonOperator(task_id="transform", python_callable=transform_task)
-    t4 = PythonOperator(task_id="validate", python_callable=validate_task)
-    t5 = PythonOperator(task_id="ai_fixes", python_callable=ai_fixes_task)
-    t6 = PythonOperator(task_id="load", python_callable=load_task)
-    t7 = PythonOperator(task_id="ai_summary", python_callable=ai_summary_task)
-    t8 = PythonOperator(task_id="drift_detection", python_callable=drift_detection_task)
-
-    t1 >> [t2, t8] >> t3 >> t4 >> t5 >> t7 >> t6
+        # Each unique file pipeline processing loop runs before feeding into the collective cross-table AI analytics node
+        process_task >> summary_task

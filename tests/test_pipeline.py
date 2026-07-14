@@ -3,13 +3,19 @@ import os
 import json
 import pandas as pd
 import pytest
-sys.path.insert(0, "include/src")
+
+# Dynamic environment paths with fallback defaults
+SRC_DIR = os.environ.get("SRC_DIR", "include/src")
+TEST_CUSTOMERS_PATH = os.environ.get("TEST_CUSTOMERS_PATH", "include/data/raw/customers.csv")
+TEST_TRANSACTIONS_PATH = os.environ.get("TEST_TRANSACTIONS_PATH", "include/data/raw/transactions.csv")
+
+sys.path.insert(0, SRC_DIR)
 
 
 # ─── Test Extract ──────────────────────────────────────────────
 def test_extract_loads_csv():
     from extract import extract
-    df = extract("include/data/raw/customers.csv")
+    df = extract(TEST_CUSTOMERS_PATH)
     assert len(df) == 9
     assert "id" in df.columns
     assert "email" in df.columns
@@ -17,7 +23,7 @@ def test_extract_loads_csv():
 
 def test_extract_correct_columns():
     from extract import extract
-    df = extract("include/data/raw/customers.csv")
+    df = extract(TEST_CUSTOMERS_PATH)
     expected_cols = ["id", "name", "email", "signup_dt", "status", "age"]
     assert list(df.columns) == expected_cols
 
@@ -33,7 +39,7 @@ def test_transform_lowercase_status():
         "status": ["ACTIVE", "Pending"],
         "age": [25.0, 30.0],
     })
-    result = transform(df)
+    result = transform(df, source_name="customers")
     assert result["status"].tolist() == ["active", "pending"]
 
 
@@ -47,15 +53,15 @@ def test_transform_trims_whitespace():
         "status": ["active"],
         "age": [25.0],
     })
-    result = transform(df)
+    result = transform(df, source_name="customers")
     assert result["name"][0] == "Alice"
 
 
 def test_transform_preserves_row_count():
     from extract import extract
     from transform import transform
-    df = extract("include/data/raw/customers.csv")
-    result = transform(df)
+    df = extract(TEST_CUSTOMERS_PATH)
+    result = transform(df, source_name="customers")
     assert len(result) == len(df)
 
 
@@ -162,13 +168,13 @@ def test_schema_hash_different_schema():
 # ─── Test File Hash ────────────────────────────────────────────
 def test_file_hash_same_file():
     from pipeline import get_file_hash
-    h1 = get_file_hash("include/data/raw/customers.csv")
-    h2 = get_file_hash("include/data/raw/customers.csv")
+    h1 = get_file_hash(TEST_CUSTOMERS_PATH)
+    h2 = get_file_hash(TEST_CUSTOMERS_PATH)
     assert h1 == h2
 
 
 def test_file_hash_different_files():
     from pipeline import get_file_hash
-    h1 = get_file_hash("include/data/raw/customers.csv")
-    h2 = get_file_hash("include/data/raw/transactions.csv")
+    h1 = get_file_hash(TEST_CUSTOMERS_PATH)
+    h2 = get_file_hash(TEST_TRANSACTIONS_PATH)
     assert h1 != h2

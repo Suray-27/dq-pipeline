@@ -660,8 +660,15 @@ ROOT CAUSE ANALYSIS:
 """
 
     # Suggested questions
+    if "messages" not in st.session_state:
+        st.session_state.messages = []
+
+    if "data_context" not in st.session_state:
+        st.session_state.data_context = "You are a helpful data assistant. Context: Sample Pipeline Run active."
+
+    # ─── 2. SUGGESTIONS PANEL ───
     if not st.session_state.messages:
-        st.markdown(f'<p class="section-header">Try asking</p>', unsafe_allow_html=True)
+        st.markdown('<p class="section-header">Try asking</p>', unsafe_allow_html=True)
         suggestions = [
             "Why was Eve Davis quarantined?",
             "Which column had the most violations?",
@@ -677,31 +684,66 @@ ROOT CAUSE ANALYSIS:
                     st.rerun()
         st.markdown("---")
 
+    # ─── 3. PERSISTENT CHAT HISTORY RENDERER ───
+    # This ensures that messages ALWAYS render on page load/rerun
     for msg in st.session_state.messages:
         with st.chat_message(msg["role"]):
             st.write(msg["content"])
 
+    # ─── 4. CHAT INPUT & EXECUTION LAYER ───
     if prompt := st.chat_input("Ask about today's pipeline data..."):
+        # Append and immediately show the user's question
         st.session_state.messages.append({"role": "user", "content": prompt})
         with st.chat_message("user"):
             st.write(prompt)
 
+        # Build history context window
         groq_messages = [{"role": "system", "content": st.session_state.data_context}]
         for msg in st.session_state.messages:
             groq_messages.append({"role": msg["role"], "content": msg["content"]})
 
-        with st.spinner("Thinking..."):
-            resp = requests.post(
-                "https://api.groq.com/openai/v1/chat/completions",
-                headers={"Content-Type": "application/json", "Authorization": f"Bearer {os.environ.get('GROQ_API_KEY')}"},
-                json={"model": "llama-3.3-70b-versatile", "max_tokens": 500, "messages": groq_messages}
-            )
-            reply = resp.json()["choices"][0]["message"]["content"]
+        # Debug Check: Verify key exists
+        api_key = os.environ.get("GROQ_API_KEY")
+        if not api_key:
+            st.error("❌ Environment error: GROQ_API_KEY is not set or empty in this session context.")
+        else:
+            with st.spinner("Thinking..."):
+                try:
+                    resp = requests.post(
+                        "https://api.groq.com/openai/v1/chat/completions",
+                        headers={
+                            "Content-Type": "application/json", 
+                            "Authorization": f"Bearer {api_key}"
+                        },
+                        json={
+                            "model": "llama-3.3-70b-versatile", 
+                            "max_tokens": 500, 
+                            "messages": groq_messages
+                        },
+                        timeout=15 # Prevent hanging indefinitely
+                    )
+                    
+                    # Check for HTTP Errors (like 401 Unauthorized or 429 Rate Limits)
+                    resp.raise_for_status()
+                    
+                    # Parse output response safely
+                    response_data = resp.json()
+                    reply = response_data["choices"][0]["message"]["content"]
 
-        st.session_state.messages.append({"role": "assistant", "content": reply})
-        with st.chat_message("assistant"):
-            st.write(reply)
+                    # Commit to session state context history
+                    st.session_state.messages.append({"role": "assistant", "content": reply})
+                    
+                    # Instantly refresh layout container elements
+                    st.rerun()
 
+                except requests.exceptions.HTTPError as http_err:
+                    st.error(f"HTTP Error occurred: {http_err}")
+                    if resp is not None:
+                        st.code(resp.text) # Prints exact error response from Groq API
+                except Exception as e:
+                    st.error(f"Unexpected Connection Error: {e}")
+
+    # ─── 5. RESET UTILITY BUTTON ───
     if st.session_state.messages:
         st.markdown("---")
         if st.button("🗑️ Clear conversation"):

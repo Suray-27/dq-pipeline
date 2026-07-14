@@ -7,6 +7,9 @@ import json
 from datetime import datetime
 load_dotenv()
 
+# Dynamic data source paths from environment variables with fallback defaults
+CUSTOMERS_CSV_PATH = os.environ.get("CUSTOMERS_CSV_PATH", "data/raw/customers.csv")
+TRANSACTIONS_CSV_PATH = os.environ.get("TRANSACTIONS_CSV_PATH", "data/raw/transactions.csv")
 
 # ─── Snowflake Connection ──────────────────────────────────────
 def get_engine():
@@ -23,14 +26,14 @@ def get_engine():
 # ─── Source Tables ─────────────────────────────────────────────
 SOURCES = {
     "customers": {
-        "file": "include/data/raw/customers.csv",
+        "file": CUSTOMERS_CSV_PATH,
         "curated": "curated_customers",
         "quarantine": "quarantine_customers",
         "depends_on": [],
         "validates_against": [],
     },
     "transactions": {
-        "file": "include/data/raw/transactions.csv",
+        "file": TRANSACTIONS_CSV_PATH,
         "curated": "curated_transactions",
         "quarantine": "quarantine_transactions",
         "depends_on": [],
@@ -41,15 +44,15 @@ SOURCES = {
 
 # ─── Snowflake Table Names ─────────────────────────────────────
 TABLES = {
-    "violations":    "dq_violations",
-    "fixes":         "dq_fix_suggestions",
-    "summaries":     "dq_run_summaries",
-    "drift":         "dq_drift_reports",
-    "lineage":       "data_lineage",
-    "schema_reg":    "schema_registry",
-    "root_cause":    "dq_root_cause_analysis",
-    "metadata":      "pipeline_metadata",
-    "control":       "pipeline_control",
+    "violations":     "dq_violations",
+    "fixes":          "dq_fix_suggestions",
+    "summaries":      "dq_run_summaries",
+    "drift":          "dq_drift_reports",
+    "lineage":        "data_lineage",
+    "schema_reg":     "schema_registry",
+    "root_cause":     "dq_root_cause_analysis",
+    "metadata":       "pipeline_metadata",
+    "control":        "pipeline_control",
 }
 
 
@@ -80,30 +83,25 @@ def set_metadata(
     pipeline_run_id: str = "",
     source_run_id: str = "",
 ):
-    """Write metadata with run tracking."""
+    """Write metadata with flexible run tracking (Snowflake instead of local files)."""
     engine = get_engine()
-    pd.DataFrame([{
-        "pipeline_run_id": pipeline_run_id,
-        "source_run_id": source_run_id or f"{pipeline_run_id}_{source_name}",
+    
+    record = {
         "source_name": source_name,
         "metadata_key": key,
         "metadata_value": value,
         "updated_at": datetime.now().isoformat(),
-    }]).to_sql(
+    }
+    
+    # Apply optional tracking contexts if supplied
+    if pipeline_run_id:
+        record["pipeline_run_id"] = pipeline_run_id
+        record["source_run_id"] = source_run_id or f"{pipeline_run_id}_{source_name}"
+
+    pd.DataFrame([record]).to_sql(
         TABLES["metadata"], engine,
         if_exists="append", index=False
     )
-
-
-def set_metadata(source_name: str, key: str, value: str):
-    """Write metadata to Snowflake instead of local files."""
-    engine = get_engine()
-    pd.DataFrame([{
-        "source_name": source_name,
-        "metadata_key": key,
-        "metadata_value": value,
-        "updated_at": datetime.now().isoformat(),
-    }]).to_sql(TABLES["metadata"], engine, if_exists="append", index=False)
 
 
 # ─── Pipeline Control ──────────────────────────────────────────
@@ -160,9 +158,11 @@ def initialize_control_table():
 
 
 def initialize_metadata_table():
-    """Create metadata table if it doesn't exist."""
+    """Create metadata table with run tracking tracking schemas if it doesn't exist."""
     engine = get_engine()
     pd.DataFrame([{
+        "pipeline_run_id": "initial",
+        "source_run_id": "initial_system",
         "source_name": "system",
         "metadata_key": "initialized",
         "metadata_value": "true",
@@ -171,13 +171,30 @@ def initialize_metadata_table():
         TABLES["metadata"], engine,
         if_exists="replace", index=False
     )
-    print("[Config] Metadata table initialized")
+    print("[Config] Metadata table initialized with tracking schemas.")
+
+def initialize_drift_table():
+    """Initialize the schema drift report tracking table in Snowflake."""
+    engine = get_engine()
+    pd.DataFrame([{
+        "source_name": "system_baseline",
+        "run_id": "initial",
+        "status": "initialized",
+        "changes": "[]",
+        "ai_explanation": "Table schema initialized.",
+        "captured_at": datetime.now().isoformat(),
+    }]).to_sql(
+        TABLES["drift"], engine,
+        if_exists="replace", index=False
+    )
+    print("[Config] Drift reporting table initialized with captured_at column.")
 
 
 if __name__ == "__main__":
     print("Initializing Snowflake control tables...")
     initialize_metadata_table()
     initialize_control_table()
+    initialize_drift_table()
     print("\nActive sources:")
     for name, source in get_active_sources().items():
         print(f"  {name} → mode: {source.get('load_mode')} priority: {source.get('priority')}")

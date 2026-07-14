@@ -67,35 +67,47 @@ def get_schema_hash(df: pd.DataFrame) -> str:
 
 def get_cached_hash(source_name: str) -> str:
     from config import get_metadata
-    return get_metadata(source_name, "schema_hash")
+    val = get_metadata(str(source_name).lower().strip(), "schema_hash")
+    return str(val).strip() if val else None
 
 
 def save_schema_hash(source_name: str, schema_hash: str,
                      pipeline_run_id: str = "", source_run_id: str = ""):
     from config import set_metadata
-    set_metadata(source_name, "schema_hash", schema_hash,
+    set_metadata(str(source_name).lower().strip(), "schema_hash", schema_hash,
                  pipeline_run_id, source_run_id)
+
 
 def save_rules(source_name: str, rules: list,
                pipeline_run_id: str = "", source_run_id: str = ""):
     from config import set_metadata
-    set_metadata(source_name, "rules", json.dumps(rules),
+    set_metadata(str(source_name).lower().strip(), "rules", json.dumps(rules),
                  pipeline_run_id, source_run_id)
 
+
 def load_business_rules(source_name: str) -> list:
-    from config import get_metadata
-    rules_json = get_metadata(source_name, "business_rules")
-    if rules_json:
-        rules = json.loads(rules_json)
-        print(f"[AI Rules] Loaded {len(rules)} business rules from Snowflake for '{source_name}'")
-        return rules
-    print(f"[AI Rules] No business rules found for '{source_name}'")
+    """Loads human-defined business validation rules from the local config JSON file."""
+    BUSINESS_RULES_FILE = os.environ.get("BUSINESS_RULES_FILE_PATH", "data/business_rules.json")
+    
+    try:
+        if os.path.exists(BUSINESS_RULES_FILE):
+            with open(BUSINESS_RULES_FILE) as f:
+                config = json.load(f)
+            
+            rules = config.get(source_name, {}).get("rules", [])
+            if rules:
+                print(f"[AI Rules] Loaded {len(rules)} local business rules for '{source_name}'")
+                return rules
+    except Exception as e:
+        print(f"[AI Rules] Warning: Could not read business rules file: {e}")
+        
+    print(f"[AI Rules] No business rules found in JSON config for '{source_name}'")
     return []
 
 
 def load_cached_rules(source_name: str) -> list:
     from config import get_metadata
-    rules_json = get_metadata(source_name, "rules")
+    rules_json = get_metadata(str(source_name).lower().strip(), "rules")
     if rules_json:
         rules = json.loads(rules_json)
         print(f"[AI Rules] Loaded {len(rules)} cached rules from Snowflake for '{source_name}'")
@@ -108,22 +120,28 @@ def infer_rules(df: pd.DataFrame, source_name: str = "unknown",
     current_hash = get_schema_hash(df)
     cached_hash = get_cached_hash(source_name)
 
-    if current_hash == cached_hash:
+    if cached_hash and current_hash == cached_hash:
         cached_rules = load_cached_rules(source_name)
         if cached_rules:
-            print(f"[AI Rules] Schema unchanged — skipping Groq, using cached rules")
+            print(f"[AI Rules] Schema unchanged for '{source_name}' — skipping Groq, using cached rules")
             return cached_rules
 
-    print(f"[AI Rules] Schema changed — calling Groq...")
-    business_rules = load_business_rules(source_name)
-    existing_rule_columns = list({r["column"] for r in business_rules})
+    print(f"[AI Rules] Schema changed for '{source_name}' — calling Groq...")
 
+    # 🛠️ FIX #1: Define the file path variable first
+    BUSINESS_RULES_FILE = os.environ.get("BUSINESS_RULES_FILE_PATH", "data/business_rules.json")
+
+    # 🛠️ FIX #2: Extract the table description immediately while opening the file
     try:
-        with open("include/data/business_rules.json") as f:
+        with open(BUSINESS_RULES_FILE) as f:
             config = json.load(f)
         description = config.get(source_name, {}).get("description", "")
     except Exception:
         description = ""
+
+    # 🛠️ FIX #3: Pass the file path into your rule loader if it reads locally
+    business_rules = load_business_rules(source_name) 
+    existing_rule_columns = list({r["column"] for r in business_rules})
 
     schema = df.dtypes.astype(str).to_dict()
     sample = df.head(10).to_dict(orient="records")
@@ -137,10 +155,14 @@ def infer_rules(df: pd.DataFrame, source_name: str = "unknown",
     )
 
     raw = _call_groq(prompt).strip()
+    
     if raw.startswith("```"):
-        raw = raw.split("```")[1]
-        if raw.startswith("json"):
-            raw = raw[4:]
+        lines = raw.splitlines()
+        if lines[0].startswith("```"):
+            lines = lines[1:]
+        if lines[-1].startswith("```"):
+            lines = lines[:-1]
+        raw = "\n".join(lines).strip()
 
     ai_rules = json.loads(raw)
     print(f"[AI Rules] Groq inferred {len(ai_rules)} rules")

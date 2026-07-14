@@ -3,7 +3,11 @@ import json
 import requests
 from datetime import datetime
 import sys
-sys.path.insert(0, "include/src")
+
+# Dynamic environment paths with fallback defaults
+SRC_DIR = os.environ.get("SRC_DIR", "include/src")
+sys.path.insert(0, SRC_DIR)
+
 from dotenv import load_dotenv
 load_dotenv()
 
@@ -12,7 +16,6 @@ from extract import extract
 from transform import transform
 from validate import validate
 from ai_rules import infer_rules
-import json
 
 
 def _call_groq(prompt: str) -> str:

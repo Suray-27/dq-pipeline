@@ -1,6 +1,6 @@
+import os
 import pandas as pd
 import json
-import os
 import sqlalchemy
 from datetime import datetime
 from config import get_engine, TABLES, SOURCES
@@ -16,6 +16,9 @@ def load(
     engine = get_engine()
     now = datetime.now().isoformat()
 
+    # Abstract the schema writing strategy out of hardcoded text
+    DB_WRITE_STRATEGY = os.environ.get("DB_WRITE_STRATEGY", "replace")
+
     # Use lowercase for pandas to_sql — Snowflake stores as uppercase automatically
     curated_table   = SOURCES.get(source_name, {}).get("curated", f"curated_{source_name}").lower()
     quarantine_table = SOURCES.get(source_name, {}).get("quarantine", f"quarantine_{source_name}").lower()
@@ -25,10 +28,10 @@ def load(
     passed_df["captured_at"] = now
     failed_df["captured_at"] = now
 
-    passed_df.to_sql(curated_table, engine, if_exists="replace", index=False)
+    passed_df.to_sql(curated_table, engine, if_exists=DB_WRITE_STRATEGY, index=False)
     print(f"[Load] {curated_table}: {len(passed_df)} rows")
 
-    failed_df.to_sql(quarantine_table, engine, if_exists="replace", index=False)
+    failed_df.to_sql(quarantine_table, engine, if_exists=DB_WRITE_STRATEGY, index=False)
     print(f"[Load] {quarantine_table}: {len(failed_df)} rows")
 
     if violations:

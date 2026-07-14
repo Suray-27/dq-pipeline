@@ -66,51 +66,54 @@ def save_schema(df: pd.DataFrame, source_name: str, run_id: str):
 
 def get_previous_schema(source_name: str) -> dict:
     engine = get_engine()
+    target_table = str(TABLES["schema_reg"]).lower().strip()
     try:
         query = f"""
             SELECT column_name, dtype
-            FROM {TABLES["schema_reg"]}
-            WHERE source_name = '{source_name}'
+            FROM {target_table}
+            WHERE lower(source_name) = '{str(source_name).lower().strip()}'
             AND pipeline_run_id = (
                 SELECT pipeline_run_id
-                FROM {TABLES["schema_reg"]}
-                WHERE source_name = '{source_name}'
+                FROM {target_table}
+                WHERE lower(source_name) = '{str(source_name).lower().strip()}'
                 ORDER BY captured_at DESC
                 LIMIT 1
             )
         """
         df = pd.read_sql(query, engine)
-        return dict(zip(df["column_name"], df["dtype"]))
-    except Exception:
+        # Normalize column name keys to lowercase to prevent string-matching bugs
+        return {str(k).lower(): str(v).lower() for k, v in zip(df["column_name"], df["dtype"])}
+    except Exception as e:
+        print(f"[Drift] Warning: Baseline schema check missed: {e}")
         return {}
 
-
 def detect_drift(df: pd.DataFrame, source_name: str, run_id: str) -> dict:
+    # 1. Fetch historical schema from Snowflake
     previous = get_previous_schema(source_name)
     current = dict(df.dtypes.astype(str))
 
+    # 2. Save the current schema as the new baseline for the next run
     save_schema(df, source_name, run_id)
 
+    # ─── CONDITION 1: ABSOLUTE FIRST LOAD ──────────────────────────────────
     if not previous:
-        print(f"[Drift] First run for '{source_name}' — no drift check needed")
+        print(f"[Drift] First run for '{source_name}' — baseline established. Skipping AI call.")
         return {
             "source_name": source_name,
             "run_id": run_id,
             "status": "first_run",
             "changes": [],
-            "ai_explanation": "First pipeline run — schema baseline established.",
+            "ai_explanation": "First pipeline run — schema baseline established successfully.",
         }
 
+    # Evaluate structural changes
     changes = []
-
     for col in current:
         if col not in previous:
             changes.append({"type": "new_column", "column": col, "dtype": current[col]})
-
     for col in previous:
         if col not in current:
             changes.append({"type": "missing_column", "column": col, "previous_dtype": previous[col]})
-
     for col in current:
         if col in previous and current[col] != previous[col]:
             changes.append({
@@ -120,70 +123,26 @@ def detect_drift(df: pd.DataFrame, source_name: str, run_id: str) -> dict:
                 "current_dtype": current[col],
             })
 
+    # ─── CONDITION 2: SUBSEQUENT LOAD W/ CHANGES DETECTED ────────────────
     if changes:
-        print(f"[Drift] {len(changes)} changes detected — calling Groq...")
+        print(f"[Drift] Alert: {len(changes)} structural shifts found for '{source_name}' — calling Groq...")
         prompt = DRIFT_PROMPT.format(
             previous=json.dumps(previous, indent=2),
             current=json.dumps(current, indent=2),
         )
         ai_explanation = _call_groq(prompt)
+        status = "drift_detected"
+        
+    # ─── CONDITION 3: ROUTINE RUN (DATA CHANGES, SCHEMA IDENTICAL) ────────
     else:
+        print(f"[Drift] Schema matches historical baseline for '{source_name}' — skipping Groq.")
         ai_explanation = "No schema drift detected."
+        status = "no_drift"
 
     return {
         "source_name": source_name,
         "run_id": run_id,
-        "status": "drift_detected" if changes else "no_drift",
-        "changes": changes,
-        "ai_explanation": ai_explanation,
-    }
-
-    # Detect changes
-    changes = []
-
-    # New columns
-    for col in current:
-        if col not in previous:
-            changes.append({
-                "type": "new_column",
-                "column": col,
-                "dtype": current[col],
-            })
-
-    # Missing columns
-    for col in previous:
-        if col not in current:
-            changes.append({
-                "type": "missing_column",
-                "column": col,
-                "previous_dtype": previous[col],
-            })
-
-    # Dtype changes
-    for col in current:
-        if col in previous and current[col] != previous[col]:
-            changes.append({
-                "type": "dtype_changed",
-                "column": col,
-                "previous_dtype": previous[col],
-                "current_dtype": current[col],
-            })
-
-    # Call AI only if changes detected
-    if changes:
-        print(f"[Drift] {len(changes)} changes detected — calling Groq...")
-        prompt = DRIFT_PROMPT.format(
-            previous=json.dumps(previous, indent=2),
-            current=json.dumps(current, indent=2),
-        )
-        ai_explanation = _call_groq(prompt)
-    else:
-        ai_explanation = "No schema drift detected."
-
-    return {
-        "source_name": source_name,
-        "run_id": run_id,
-        "status": "drift_detected" if changes else "no_drift",
+        "status": status,
         "changes": changes,
         "ai_explanation": ai_explanation,
     }
@@ -192,17 +151,13 @@ def detect_drift(df: pd.DataFrame, source_name: str, run_id: str) -> dict:
 if __name__ == "__main__":
     from dotenv import load_dotenv
     load_dotenv()
-
-    # Simulate first run
-    import sys
-    sys.path.insert(0, "include/src")
-    from extract import extract
-
-    df = extract("include/data/raw/customers.csv")
+    
+    from config import SOURCES
     run_id = datetime.now().strftime("%Y%m%d%H%M%S")
-
-    report = detect_drift(df, source_name="customers", run_id=run_id)
-    print("\n--- Drift Report ---")
-    print(f"Status   : {report['status']}")
-    print(f"Changes  : {report['changes']}")
-    print(f"AI Explaination   : {report['ai_explanation']}")
+    print("--- Checking Schema Drift Across All Enterprise Core Tables ---")
+    
+    for source_name, source_info in SOURCES.items():
+        from extract import extract
+        df = extract(source_info["file"])
+        report = detect_drift(df, source_name=source_name, run_id=run_id)
+        print(f" -> {source_name} status: {report['status']}")
