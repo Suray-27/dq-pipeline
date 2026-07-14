@@ -82,12 +82,6 @@ The vectorized processing engine natively translates these validation strategies
 
 ---
 
-## Project Structure
-
-```
-
-```
-
 ## 🚀 Setup & Execution Quickstart
 
 ### Prerequisites
